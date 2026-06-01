@@ -412,19 +412,21 @@ Receive the payload in the tab as `muxy.data`.
 
 ### Best-practice CSS — copy as a starting point
 
+Colors come from theme variables; spacing/font/radius values come from the [design system](#design-system--match-the-apps-metrics) above.
+
 ```css
 * { box-sizing: border-box; }
 
 body {
   margin: 0;
   padding: 16px;
-  font: 13px -apple-system, "SF Pro", system-ui, sans-serif;
+  font: 12px -apple-system, "SF Pro", system-ui, sans-serif;
   background: var(--muxy-background);
   color: var(--muxy-foreground);
 }
 
 h2 {
-  font-size: 11px;
+  font-size: 10px;
   margin: 16px 0 6px;
   color: var(--muxy-foreground-muted);
   text-transform: uppercase;
@@ -435,7 +437,7 @@ button {
   background: var(--muxy-surface);
   color: var(--muxy-foreground);
   border: 1px solid var(--muxy-border);
-  border-radius: 5px;
+  border-radius: 6px;
   padding: 6px 10px;
   font: inherit;
   cursor: pointer;
@@ -447,14 +449,14 @@ button:active { transform: translateY(1px); }
   background: var(--muxy-surface);
   border: 1px solid var(--muxy-border);
   border-radius: 8px;
-  padding: 14px 16px;
+  padding: 16px;
 }
 
 .badge {
   font-family: "SF Mono", Menlo, monospace;
-  font-size: 12px;
+  font-size: 11px;
   padding: 2px 8px;
-  border-radius: 10px;
+  border-radius: 4px;
   background: var(--muxy-surface);
   color: var(--muxy-accent);
   border: 1px solid var(--muxy-border);
@@ -497,6 +499,138 @@ document.body.appendChild(badge);
 muxy.onThemeChange((theme) => {
   badge.textContent = `${theme.colorScheme} · ${theme.accent}`;
 });
+```
+
+## Design system — match the app's metrics
+
+Theme variables make an extension the right *colors*; the design system makes it the right *shape*. Muxy's native surfaces — the source-control panel, the file editor, the markdown view, the diff viewer, popovers — are all built from one scale of spacing, font, icon, control, and radius values. Reuse the same numbers and your tab/panel/popover reads as a native part of the app instead of a webpage embedded in it. Pick *from this scale* rather than inventing values; the spacing between two close controls is `4px`, not `5px`, because every native control uses `4px`.
+
+These are the app's base values at the default interface scale, in points (1pt = 1px in a webview at 100%). Native views scale every one of them by the user's **Settings → Interface** scale; the one value Muxy injects pre-scaled is `--muxy-topbar-height` (see [Tab topbar](#tab-topbar-recommended)), so align any topbar to that variable and use the fixed values below for everything else.
+
+### Spacing scale
+
+Use for padding, `gap`, and margins. The whole app is built from this 2/4/6/8/10/12/16/20/24/32 ramp — no in-between values.
+
+| px | Where it's used |
+| --- | --- |
+| `2` | Hairline gaps, badge vertical padding |
+| `4` | Gap between adjacent icon buttons in a strip |
+| `6` | Gap between controls in a header |
+| `8` | Gap between an icon and its label; standard row inner gap |
+| `10` | **Standard leading/trailing padding** for panel rows and content |
+| `12` | Topbar horizontal padding; comfortable block padding |
+| `16` | Section padding, card padding |
+| `20`, `24`, `32` | Larger section/region spacing |
+
+The single most common mismatch: native rows pad `10px` left and right (the row's leading padding also indents by depth in trees). Use `padding: 0 10px` on rows, not `16px`.
+
+### Font sizes
+
+System font (`-apple-system, system-ui`) for UI; `"SF Mono", Menlo, monospace` for code, counts, and hashes.
+
+| px | Role | Native usage |
+| --- | --- | --- |
+| `9` | Micro labels | Ref badges on commits |
+| `10` | Caption | Smallest captions |
+| `11` | Footnote | Section-header labels (often uppercased), status letters, small metadata |
+| `12` | **Body** | File paths, primary row text |
+| `13` | Emphasis | Default control/icon-button text |
+| `14` | Headline | Tab/panel titles |
+| `15`, `16` | Title | Larger headings |
+| `20`, `24`, `28` | Display | Hero numbers only |
+
+Body text is `12px`, not `13px`. Titles in a topbar are `14px`, weight `600`.
+
+### Icon sizes & stroke
+
+SF Symbols render as a font, so an icon's size is a font size and its stroke is the font weight. Native icons sit at **`12`–`14px`** and use **`weight: .semibold`** (≈ CSS `font-weight: 600`). Inline icon buttons in rows render at `11px`. Hairline vector strokes (custom SVG glyphs like the diff icon) use **`1.5px`** stroke width with round caps/joins.
+
+| px | Icon role |
+| --- | --- |
+| `10` | Inline/decorative |
+| `11` | Row action buttons |
+| `12` | Small toolbar icons |
+| `14` | Standard icon |
+| `16`, `20`, `28` | Large/feature icons |
+
+When using an icon font or SVG, match `font-weight: 600` / `stroke-width: 1.5px` — a thinner default weight is the most common reason an extension's icons look foreign.
+
+### Controls (buttons, hit targets)
+
+Clickable controls are sized by a fixed square hit target, not by their content. An icon button is a `24×24` tap target wrapping a `13px` glyph; the glyph is centered and the box gives it consistent spacing.
+
+| px | Control |
+| --- | --- |
+| `20` | Small control / compact hit target |
+| `24` | **Standard icon-button hit target** |
+| `32` | Large control; header height; topbar height |
+
+Text buttons (Commit / Pull / Push) are `28px` tall with `10px` horizontal padding.
+
+### Corner radii
+
+| px | Use for |
+| --- | --- |
+| `4` | Buttons, small chips, badges |
+| `6` | Inputs, medium controls |
+| `8` | Cards, panels, a popover's inner boxes |
+| `10` | Large containers |
+
+Buttons are `4`–`6px`, not `5px`. Cards are `8px`.
+
+### CSS variables for these tokens
+
+Spacing, font, icon, control, and radius values are **not** injected as CSS variables — only colors and `--muxy-topbar-height` are. Declare the scale once at the top of your stylesheet and reference it everywhere, so a single edit retunes the whole extension and there are no stray magic numbers:
+
+```css
+:root {
+  --s1: 2px;  --s2: 4px;  --s3: 6px;  --s4: 8px;  --s5: 10px;
+  --s6: 12px; --s7: 16px; --s8: 20px; --s9: 24px; --s10: 32px;
+
+  --font-caption: 10px; --font-footnote: 11px; --font-body: 12px;
+  --font-emphasis: 13px; --font-headline: 14px;
+
+  --icon: 14px; --icon-sm: 12px; --icon-row: 11px;
+  --control: 24px; --radius: 6px; --radius-card: 8px;
+  --row-height: 34px;
+}
+```
+
+### A native-feeling row (source-control panel as the reference)
+
+The file row in the source-control panel is the canonical layout: a fixed `34px` height, `10px` side padding, `8px` gap, a `12px`-body label that flexes, a status icon, and trailing metadata in mono.
+
+```css
+.row {
+  display: flex;
+  align-items: center;
+  gap: var(--s4);                 /* 8px */
+  height: var(--row-height);      /* 34px */
+  padding: 0 var(--s5);           /* 10px L/R */
+  font-size: var(--font-body);    /* 12px */
+  color: var(--muxy-foreground);
+}
+.row:hover { background: var(--muxy-hover); }
+.row .icon { width: var(--icon-row); font-weight: 600; color: var(--muxy-foreground-muted); }
+.row .path { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.row .stat { font-family: "SF Mono", Menlo, monospace; }
+
+.section-label {
+  font-size: var(--font-footnote); /* 11px */
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  color: var(--muxy-foreground-muted);
+  padding: 0 var(--s5);
+}
+
+.icon-button {
+  width: var(--control); height: var(--control);  /* 24×24 hit target */
+  display: inline-flex; align-items: center; justify-content: center;
+  font-size: var(--font-emphasis); font-weight: 600;     /* 13px glyph */
+  color: var(--muxy-foreground-muted);
+  border: none; background: none; border-radius: var(--radius); cursor: pointer;
+}
+.icon-button:hover { color: var(--muxy-foreground); background: var(--muxy-hover); }
 ```
 
 ## End-to-end example (minimal extension)
@@ -571,7 +705,7 @@ This extension only opens a tab from a palette command, so it declares no backgr
 /* src/tabs/styles.css */
 body {
   margin: 0; display: flex; flex-direction: column; height: 100vh;
-  font: 13px -apple-system, system-ui, sans-serif;
+  font: 12px -apple-system, system-ui, sans-serif;
   background: var(--muxy-background);
   color: var(--muxy-foreground);
 }
@@ -586,12 +720,12 @@ body {
 .topbar .title   { color: var(--muxy-foreground); font-weight: 600; }
 .topbar .actions { margin-left: auto; display: flex; gap: 4px; }
 .content { flex: 1; overflow: auto; padding: 24px; }
-h1 { font-size: 18px; color: var(--muxy-accent); }
+h1 { font-size: 16px; color: var(--muxy-accent); }
 button {
   background: var(--muxy-surface);
   color: var(--muxy-foreground);
   border: 1px solid var(--muxy-border);
-  border-radius: 5px;
+  border-radius: 6px;
   padding: 6px 10px;
 }
 button:hover { background: var(--muxy-hover); border-color: var(--muxy-accent); }
@@ -635,7 +769,7 @@ A status-bar item that opens a self-sizing popover. The popover replaces what us
   <meta charset="utf-8">
   <style>
     /* Popover: transparent body so the native macOS popover material shows through. */
-    body { margin: 0; font: 13px -apple-system, system-ui, sans-serif;
+    body { margin: 0; font: 12px -apple-system, system-ui, sans-serif;
            background: transparent; color: var(--muxy-foreground); }
     .box { padding: 16px; display: flex; flex-direction: column; gap: 10px; }
     .line { color: var(--muxy-foreground-muted); }
@@ -683,6 +817,7 @@ After editing the manifest in `package.json`, scripts, tab HTML/CSS/JS, or the b
 - [ ] `npm run build` succeeds and every path declared in `"muxy"` (entries, `background`, scripts, icons, assets) exists under `dist/`.
 - [ ] `muxy.permissions` declares only what is actually used.
 - [ ] Every CSS rule for UI chrome uses `var(--muxy-…)`.
+- [ ] Spacing, font, icon, control, and radius values come from the [design-system scale](#design-system--match-the-apps-metrics) — no off-ramp magic numbers (rows pad `10px`, body text is `12px`, icons are `12`–`14px` at weight `600`).
 - [ ] `muxy.onThemeChange` is wired for any canvas/SVG/JS-rendered color.
 - [ ] Hover and active states are visible in both light and dark themes.
 - [ ] No hardcoded paths to `~/.config/muxy` from inside the extension — use `muxy.exec({ cwd: … })` or rely on the working directory Muxy sets.

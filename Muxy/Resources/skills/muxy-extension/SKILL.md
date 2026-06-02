@@ -1,835 +1,98 @@
 ---
 name: muxy-extension
-description: Use when authoring or modifying a Muxy extension. Covers the npm + Vite project model, manifest fields (the `"muxy"` object in `package.json`), the two extension surfaces (the `background.js` host and the in-page `window.muxy` bridge), the permission model, theme adaptation, and end-to-end examples drawn from the reference extension.
+description: Best-practice guide for authoring a Muxy extension — how it should look and behave so it reads as a native part of the app. Covers theming (follow the theme, never hardcode colors), the sizing scale, and which surface to use. Mechanics (manifest fields, permissions, the window.muxy API) live in the linked docs.
 ---
 
-# Muxy Extension Author Guide
+# Muxy Extension Guide
 
-Muxy extensions live in `~/.config/muxy/extensions/<name>/` and load when Muxy starts. Each extension is an **npm + [Vite](https://vitejs.dev) project**: a directory containing a `package.json` whose `"muxy"` object is the manifest. There is no separate `manifest.json` — `name` and `version` are top-level npm fields, and every other manifest field lives under `"muxy"`. You author source under `src/` (using any framework — React, Vue, Svelte, or vanilla), `vite build` bundles it into `dist/`, and Muxy installs and reads `dist/`. Optional resources (HTML tabs, a background script, icons, assets) are bundled by Vite into `dist/` alongside.
+A Muxy extension is an npm + [Vite](https://vitejs.dev) project in `~/.config/muxy/extensions/<name>/`: source under `src/`, `vite build` emits `dist/`, and Muxy installs and reads `dist/`. The manifest is the `"muxy"` object in `package.json`.
 
-## The two surfaces — pick the right one
+**This skill is the guidance layer — how an extension should look and behave.** For the API and manifest mechanics (every field, the permission strings, the full `window.muxy` surface, events, scripts), read the reference docs:
 
-A Muxy extension has two independent surfaces. Most of getting an extension right is choosing the correct one for each piece of work:
+> **<https://github.com/muxy-app/muxy/tree/main/docs/extensions>**
 
-- **UI pages (in-process).** Tabs, panels, and popovers are HTML/CSS/JS rendered in a `WKWebView`. Their page scripts get the **full `window.muxy` API** — `tabs`, `panes`, `projects`, `worktrees`, `events`, `exec`, `notifications`, `panels`, `popover`, plus `data`, `theme`, and `tabInstanceID`. Use a page whenever you need to *show* something.
-- **Background script (`background.js`, out-of-process).** Optional. Muxy runs it in a long-lived host process and gives it a **small `muxy` global** — only `extensionID`, `events.subscribe`/`unsubscribe`, `exec`, and `console.*`. Use it only to **react to pushed events** or **run shell commands on a schedule/in the background**, independent of any open tab. Most extensions don't need one.
+The goal of everything below: an extension should be indistinguishable from a native Muxy surface. Match the theme and match the scale, and it will be.
 
-Rule of thumb: long-lived, event-driven, or headless work → `background.js`. Anything the user looks at → a UI page. Don't open a hidden tab just to run logic — use a [`runScript`](#run-script-commands-javascriptcore-sandbox) command instead.
+## Pick the right surface
 
-## When to use this skill
+- **Showing something to the user** → a **UI page** (tab, panel, or popover). Page scripts get the full `window.muxy` API.
+- **Reacting to events or running shell commands headlessly** → a **`background.js`** script. Most extensions don't need one.
+- **One-shot logic from the palette** → a **`runScript`** command, not a hidden tab.
 
-Use this skill when:
+Don't open a hidden tab to run logic, and don't put event-driven work in tab JS where closing the tab loses it.
 
-- Writing a new Muxy extension (the `"muxy"` manifest in `package.json`, background script, tab/panel/popover UI).
-- Adding a command, topbar item, status-bar item, settings entry, tab type, panel, or popover.
-- Styling an extension page so it adapts to the user's current Muxy theme.
-- Reading Muxy state (panes, tabs, projects, worktrees) or running shell commands from a page.
-- Reacting to workspace events from a `background.js` script.
+## Theme — follow it, never hardcode
 
-## Project layout
+Muxy ships paired light/dark themes and a user-chosen accent. Every extension webview inherits CSS custom properties on `document.documentElement` that track the live theme and update automatically when the user switches it.
 
-A typical extension is a standard npm + Vite project:
+**Rules:**
 
-```
-my-extension/
-├── package.json            # required; npm fields + the "muxy" manifest object
-├── vite.config.js          # required; build.outDir = "dist"
-├── index.html              # Vite entry (can also point at tab/panel/popover pages)
-├── .gitignore              # ignores node_modules/ and dist/
-├── CLAUDE.md               # author guide for this extension
-├── AGENTS.md → CLAUDE.md   # symlink for non-Claude agents
-├── src/                    # your source — any framework or vanilla
-│   ├── tabs/
-│   │   ├── playground.html
-│   │   ├── playground.css
-│   │   └── playground.js
-│   ├── scripts/
-│   │   └── do-something.js # invoked via { "kind": "runScript" }
-│   └── assets/
-│       └── icon.svg        # used by topbar/status-bar items
-└── dist/                   # generated by `vite build` — gitignored, shipped/installed
-```
+1. **No hex literals for chrome.** Use `var(--muxy-…)` for every color. The only exception is decorative art meant to be theme-independent.
+2. **The variables already invert** for light/dark — never sniff the color scheme to pick a color. Only branch on `muxy.theme.colorScheme` for things a variable can't express (e.g. swapping a logo image).
+3. **`--muxy-accent` is the only saturated color.** Use it sparingly — primary action, focus ring, one key number — so it stays distinctive. Text *on* an accent fill should be `--muxy-background` to stay legible in both themes.
+4. **Depth comes from `--muxy-surface` + `--muxy-border` + `--muxy-hover`,** not from new colors. Cards, inputs, code blocks, and buttons all share the one surface color.
+5. **Re-read the theme for JS-drawn color.** Canvas/SVG that doesn't pick up CSS variables must redraw in `muxy.onThemeChange(theme => …)`.
+6. **Popovers leave the body transparent** (`body { background: transparent; }`) — they sit over native macOS popover material that is already light/dark-aware. Tabs and panels *do* paint `--muxy-background` on the body.
 
-`dist/` is the build output: the publishing pipeline runs `npm run build`, and `dist/` is what the app installs and reads. **Every relative path in the `"muxy"` manifest (`entry`, `script`, `background`, `icon`, asset paths) resolves against `dist/`**, so author your source so the build emits those files at the declared paths. Each path is rejected if it escapes the directory. Iterate locally with `npm run dev`; `node_modules/` and `dist/` are gitignored.
-
-## Manifest (`package.json`)
-
-The manifest is the `"muxy"` object inside `package.json`. `name` and `version` are **top-level npm fields** (the single source of truth — the extension directory name must equal `name`); every other manifest field lives under `"muxy"`. `package.json` must also declare a `build` script (`"build": "vite build"`) — the publishing pipeline runs it.
-
-The full reference `package.json`, taken from the bundled demo extension:
-
-```json
-{
-  "name": "demo",
-  "version": "0.2.0",
-  "private": true,
-  "type": "module",
-  "scripts": { "dev": "vite", "build": "vite build" },
-  "devDependencies": { "vite": "^5.0.0" },
-  "muxy": {
-    "$schema": "https://raw.githubusercontent.com/muxy-app/muxy/main/docs/extensions/schema/manifest.schema.json",
-    "description": "Reference extension: playground tab, runScript command, topbar icon, status bar items, and settings.",
-    "background": "background.js",
-    "permissions": [
-      "tabs:read", "tabs:write",
-      "panes:read", "panes:write",
-      "projects:read", "projects:write",
-      "worktrees:read", "worktrees:write",
-      "notifications:write",
-      "commands:run-script",
-      "commands:exec"
-    ],
-    "tabTypes": [
-      { "id": "playground", "title": "Muxy API Playground", "entry": "tabs/playground.html" },
-      { "id": "dashboard",  "title": "Git Dashboard",       "entry": "tabs/dashboard.html"  }
-    ],
-    "commands": [
-      {
-        "id": "open-playground",
-        "title": "Demo: Open Playground",
-        "action": { "kind": "openTab", "tabType": "playground" }
-      },
-      {
-        "id": "run-script",
-        "title": "Demo: Open Git Dashboard",
-        "action": { "kind": "runScript", "script": "scripts/git-status.js" }
-      }
-    ],
-    "topbarItems": [
-      {
-        "id": "playground",
-        "icon": { "svg": "assets/playground.svg" },
-        "tooltip": "Open Demo Playground",
-        "command": "open-playground"
-      }
-    ],
-    "statusBarItems": [
-      {
-        "id": "ticker",
-        "icon": { "symbol": "leaf.fill" },
-        "text": "ready",
-        "tooltip": "Demo ticker (left)",
-        "side": "left",
-        "command": "open-playground"
-      },
-      {
-        "id": "dashboard",
-        "icon": { "symbol": "chart.bar.fill" },
-        "tooltip": "Open Git Dashboard",
-        "side": "right",
-        "command": "run-script"
-      }
-    ],
-    "settings": [
-      {
-        "key": "refreshSeconds",
-        "title": "Refresh Interval (s)",
-        "description": "How often to update the left status bar ticker.",
-        "type": "number",
-        "defaultValue": 5
-      }
-    ]
-  }
-}
-```
-
-Field-by-field:
-
-- `name` — required, **top-level npm field**. Alphanumerics, dash, underscore, dot only. Must match the directory name.
-- `version` — required semver string, **top-level npm field**.
-- `scripts.build` — required. Must be `"vite build"` (or otherwise emit the manifest's declared paths into `dist/`); the publishing pipeline runs `npm run build`.
-- `muxy.description` — optional one-line summary shown in the Extensions modal.
-- `muxy.background` — optional relative path (resolved against `dist/`) to a JavaScript file. When present it must exist inside `dist/`; Muxy runs it in a long-lived host process for the lifetime of the extension. Provide it only to receive pushed events (`muxy.events.subscribe`) or run background shell commands (`muxy.exec`) — command, topbar, status bar, tab, and `runScript` extensions need none, and omitting it means Muxy keeps no resident process.
-- `muxy.permissions` — array of permission strings. Declare only what the background script or tabs actually use.
-- `muxy.events` — array of event names this extension subscribes to (for example `pane.created`, `tab.focused`, `pane.closed`, `file.changed`). Command events (`command.<id>`) are auto-allowed. `file.changed` fires when a file under a watched project/worktree root changes (debounced ~0.3s, Git-internal lock/dir noise skipped); its payload is `{ path, projectPath }` — one event per changed `path`, `projectPath` being the watched root.
-- `muxy.tabTypes` — declares HTML pages (in `dist/`) renderable as tabs. A tab fills its whole region with one webview, so the page renders all of its own chrome — including, by recommendation, a [topbar](#tab-topbar-recommended) matching the app's native tabs.
-- `muxy.panels` — declares HTML pages renderable as dockable/floating panels (`position`: `right`|`bottom`, `mode`: `floating`|`pinned`, optional `icon`/`title`/`hiddenControls`, or `hideTopbar: true` to drop the whole header and render edge-to-edge — the page must then close itself). Requires `panels:write` to open/close at runtime. One pinned and one floating panel per position; opening another in that slot replaces it.
-- `muxy.popovers` — declares HTML pages renderable as transient popovers anchored to a topbar/status-bar item (`entry` required; optional `title`, `width`, `height` defaulting to 320×360). Frameless, auto-dismiss on outside click, at most one open at a time. Opened via an `openPopover` command bound to a topbar/status-bar item; the page sizes itself with `muxy.popover.resize()` (needs `panels:write`).
-- `muxy.commands` — palette commands. Each command's `action.kind` is `event` (default — fires `command.<id>`), `openTab`, `togglePanel`, `openPopover`, or `runScript`.
-- `muxy.topbarItems` / `muxy.statusBarItems` — UI hooks bound to a command. `icon` is either `{ "symbol": "<sf-symbol>" }` or `{ "svg": "<relative/path.svg>" }` (resolved against `dist/`).
-- `muxy.settings` — user-visible settings (`string` | `bool` | `number`) editable in the Extensions modal. Values persist per extension. (Reading/writing them programmatically is a socket verb used by the `muxy` CLI; it is not exposed on the background `muxy` global yet.)
-- `muxy.marketplace` — optional metadata for the extension marketplace (`icon`, `screenshots`); paths resolve against `dist/`.
-
-Common load failures: a declared `background` script that is missing from `dist/` or escapes the directory, a tab/panel/popover entry missing from `dist/` or that escapes the directory, a command references an unknown `tabType`, `panel`, or `popover`, a topbar or status-bar item references an unknown command. Most of these mean the build didn't emit the file — run `npm run build` and confirm the path exists under `dist/`. Failures appear in the Extensions modal under "Load Errors".
-
-## Permissions reference
-
-Permissions are gated server-side. Requests without the matching permission fail.
-
-| Permission | Enables |
-| --- | --- |
-| `panes:read` | `panes.list`, `panes.readScreen` |
-| `panes:write` | `panes.send`, `panes.sendKeys`, `panes.close`, `panes.rename` |
-| `tabs:read` | `tabs.list` |
-| `tabs:write` | `tabs.open`, `tabs.switch`, `tabs.new`, `tabs.next`, `tabs.previous` |
-| `projects:read` | `projects.list` |
-| `projects:write` | `projects.switch` |
-| `worktrees:read` | `worktrees.list` |
-| `worktrees:write` | `worktrees.switch`, `worktrees.refresh` |
-| `notifications:write` | `notifications.notify` (alias: `toast`) |
-| `panels:write` | `panel.open`, `panel.toggle`, `panel.close`, `popover.resize`, `popover.close` |
-| `commands:run-script` | `runScript` commands |
-| `commands:exec` | `muxy.exec` (always prompts the user the first time) |
-
-Principle: least privilege. Add a permission only when adding the call that requires it.
-
-## Background script
-
-The `background` script is optional. Manifest UI (palette commands, topbar items, status-bar items, tab types) and `runScript` commands all work without one. Add a background script only when the extension must **receive pushed events** or **run shell commands on its own** (not in response to a tab). Muxy runs the script in a long-lived host process for the lifetime of the extension; without one there is no resident process.
-
-The host exposes a small `muxy` global to `background.js`:
-
-- `muxy.extensionID` — the extension's `name`.
-- `muxy.events.subscribe(name, handler)` / `muxy.events.unsubscribe(name, handler)` — receive workspace events declared in `events`. `handler(payload)` is called with the event payload object.
-- `muxy.exec(argv[, options])` / `muxy.exec(options)` — run a shell command (needs `commands:exec`; prompts the user the first time, then honours remembered allow/deny rules). Returns `{ stdout, stderr, exitCode, timedOut, truncated }`.
-- `console.log` / `console.warn` / `console.error` — written to the extension log.
-
-The richer state/mutation API (`muxy.tabs`, `muxy.panes`, `muxy.projects`, `muxy.worktrees`) is available to **tab/panel/popover pages** via `window.muxy`, not to the background script.
-
-### Example `background.js` (subscribe to an event, run a command)
-
-```js
-muxy.events.subscribe('pane.created', async (payload) => {
-  console.log('pane created', payload.paneID);
-  const result = await muxy.exec(['git', 'status', '--short']);
-  console.log(result.stdout);
-});
-
-muxy.events.subscribe('file.changed', (payload) => {
-  console.log('file changed', payload.path, 'in', payload.projectPath);
-});
-```
-
-The first `muxy.exec` for a given command prompts the user in the main window. If they allow-and-remember it, matching commands run without prompting; if they deny, the call rejects with "response not allowed".
-
-## In-tab bridge (`window.muxy`)
-
-When a tab type renders an HTML page, Muxy injects a `window.muxy` object before the page scripts run. Use it to read Muxy state, open tabs, mutate panes, subscribe to events, and read the current theme.
-
-### Bootstrap (read context and theme)
-
-```js
-console.log('running as', muxy.extensionID, 'in tab', muxy.tabInstanceID);
-console.log('initial data payload:', muxy.data);
-console.log('current theme:', muxy.theme);
-
-muxy.onThemeChange((theme) => {
-  // Theme changed (user toggled light/dark or accent). CSS variables
-  // (--muxy-background, --muxy-accent, ...) are already updated on
-  // document.documentElement — this hook is for JS-driven re-renders.
-  console.log('theme changed to', theme.colorScheme, theme.accent);
-});
-```
-
-### Read Muxy state
-
-```js
-const tabs       = await muxy.tabs.list();
-const panes      = await muxy.panes.list();
-const projects   = await muxy.projects.list();
-const worktrees  = await muxy.worktrees.list();
-
-const activeProject = projects.find((p) => p.isActive);
-```
-
-### Open / switch / mutate tabs
-
-```js
-await muxy.tabs.new();                                  // new terminal tab
-await muxy.tabs.next();                                 // cycle forward
-await muxy.tabs.switchTo(0);                            // by index
-
-await muxy.tabs.open({ kind: 'terminal' });
-await muxy.tabs.open({ kind: 'vcs' });
-await muxy.tabs.open({ kind: 'editor', filePath: '/abs/path/README.md' });
-
-// Open another instance of this extension's tab, with a custom data payload.
-await muxy.tabs.open({
-  kind: 'extensionWebView',
-  extension: {
-    id: muxy.extensionID,
-    tabType: 'dashboard',
-    data: { source: 'self', when: new Date().toISOString() },
-  },
-});
-
-// singleton: reuse one tab per tabType instead of duplicating. If it's already
-// open, Muxy focuses it and pushes the new data into the live page (muxy.onDataChange).
-await muxy.tabs.open({
-  kind: 'extensionWebView',
-  extension: { id: muxy.extensionID, tabType: 'dashboard', singleton: true, data: { prNumber: 42 } },
-});
-```
-
-### Tab topbar (recommended)
-
-A tab fills its whole region with a single webview — "one content for the entire tab" — so the page renders **all** of its own chrome. Muxy's native tabs (editor, source control, diff viewer) each open with a thin **topbar**: a horizontal bar at the top holding a title/icon on the left and controls on the right. **Render a matching topbar at the top of your tab page** so it looks native and so split panes line up — alignment only holds when every tab uses the same bar geometry.
-
-Do **not** hardcode the bar height: it tracks the user's interface scale (Settings → Interface) and updates live. Muxy injects the scaled height as `--muxy-topbar-height` (re-pushed on scale and theme changes), so use that variable plus the theme variables:
-
-```css
-.topbar {
-  box-sizing: content-box;
-  height: var(--muxy-topbar-height);
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 0 12px;
-  background: var(--muxy-background);
-  border-bottom: 1px solid var(--muxy-border);
-  flex: 0 0 auto;
-}
-.topbar .title   { color: var(--muxy-foreground); font-weight: 600; }
-.topbar .actions { margin-left: auto; display: flex; gap: 4px; }
-```
-
-`--muxy-topbar-height` is the bar's **content** height. Native tabs draw their 1px divider *below* the bar, so the topbar must keep `box-sizing: content-box` — the `border-bottom` then adds beneath the height instead of eating into it, and the divider lands on the same line as adjacent native tabs in a split. (Under a global `* { box-sizing: border-box }` reset, the border would sit 1px high.)
-
-```html
-<body style="margin:0;display:flex;flex-direction:column;height:100vh;">
-  <header class="topbar">
-    <span class="title">Git Dashboard</span>
-    <span class="actions"><button id="refresh">↻</button></span>
-  </header>
-  <main style="flex:1;overflow:auto;"><!-- tab body --></main>
-</body>
-```
-
-The topbar is your own HTML, so you place its title, icon, and as many buttons/icons on either side as you need. To render edge-to-edge content with no bar (a canvas, a custom full-tab layout), simply omit the topbar — nothing in Muxy forces one, but matching the app is the recommended default.
-
-### Open / close panels
-
-Requires `panels:write`. The panel id must be declared under `panels` in the manifest.
-
-```js
-await muxy.panels.open('dashboard');                 // open (or move) the panel
-await muxy.panels.toggle('dashboard');               // open if closed, close if open
-await muxy.panels.open('dashboard', { tab: 'logs' }); // override defaultData for this instance
-await muxy.panels.close('dashboard');
-```
-
-### Size / close a popover
-
-Available inside a popover page. Requires `panels:write`. A popover is opened by the user from its anchoring topbar/status-bar item (there is no `open` from JS) — the page only sizes itself to its content and can dismiss itself.
-
-```js
-// Fit the popover to its content once laid out:
-window.addEventListener('load', () =>
-  muxy.popover.resize(
-    document.documentElement.scrollWidth,
-    document.documentElement.scrollHeight
-  )
-);
-
-await muxy.popover.close(); // dismiss self
-```
-
-### Drive terminal panes
-
-```js
-const [pane] = await muxy.panes.list();
-await muxy.panes.send(pane.id, 'echo hi\n');           // write text
-await muxy.panes.sendKeys(pane.id, 'Enter');           // press a key
-await muxy.panes.rename(pane.id, 'Renamed');
-const buffer = await muxy.panes.readScreen(pane.id, 5); // last 5 lines
-```
-
-### Run shell
-
-```js
-// Simple argv (no shell parsing):
-const result = await muxy.exec(['git', 'status', '--short']);
-// { exitCode, stdout, stderr, timedOut }
-
-// Shell string (uses /bin/sh -c):
-await muxy.exec({ shell: 'git diff | wc -l' });
-
-// With working dir and a hard timeout:
-await muxy.exec(['ls', '-1'], { cwd: '~' });
-await muxy.exec(['sleep', '5'], { timeoutMs: 500 }); // timedOut: true
-```
-
-`muxy.exec` requires `commands:exec` and prompts the user the first time. Users can save allow/deny rules per command.
-
-### Subscribe to live events
-
-```js
-const off = muxy.events.subscribe('pane.created', (payload) => {
-  console.log('new pane:', payload);
-});
-
-// Stop listening:
-off();
-```
-
-Only events declared in `muxy.events` (or auto-allowed command events) reach the callback.
-
-### Notifications
-
-```js
-await muxy.notifications.notify({ title: 'Done', body: 'Build finished in 3.2s' });
-```
-
-## Run-script commands (JavaScriptCore sandbox)
-
-A command with `{ "kind": "runScript", "script": "scripts/x.js" }` runs in a per-extension JavaScriptCore context (no DOM, no Node) that exposes the same `muxy.*` surface as tabs, plus `console.log`. Calls are **synchronous** here (no `await`). Use this for one-shot tasks that compute data and then open a tab to display it — it's the right tool for headless logic triggered from the palette, instead of opening a hidden tab.
-
-Example — `scripts/git-status.js` from the demo extension:
-
-```js
-function run(argv) {
-  const result = muxy.exec(argv); // synchronous in scripts
-  return result.exitCode === 0 ? result.stdout.trim() : '';
-}
-
-const branch       = run(['git', 'rev-parse', '--abbrev-ref', 'HEAD']);
-const totalCommits = Number(run(['git', 'rev-list', '--count', 'HEAD'])) || 0;
-
-muxy.tabs.open({
-  kind: 'extensionWebView',
-  extension: {
-    id: muxy.extensionID,
-    tabType: 'dashboard',
-    data: { branch, totalCommits, generatedAt: new Date().toISOString() },
-  },
-});
-```
-
-Receive the payload in the tab as `muxy.data`. For `singleton` tabs that get reopened with new data, react to the update with `muxy.onDataChange((data) => render(data))`.
-
-## Theming — adapt to the user's current Muxy theme
-
-**Do not hardcode colors. Adopting the app theme is the best practice — and it is required for popovers,** which sit directly against the app chrome and look broken if they don't match. Muxy supports paired light/dark themes and a user-selected accent color. Every extension webview — tab, panel, **and popover** — inherits the same CSS custom properties on `document.documentElement` that match the live theme. They update automatically when the user changes theme, and the rules below apply identically to all three surfaces.
-
-**Popovers: leave the page background transparent.** The webview is presented over the native macOS popover material (translucent vibrancy that is already light/dark-aware), and its backing is non-opaque. Set `body { background: transparent; }` — do **not** paint `--muxy-background` on the popover body — so the system material shows through and the popover matches macOS automatically. Foreground text, accents, and translucent `--muxy-surface` chips/buttons still use the theme variables as usual. (Tabs and panels fill their whole region, so they *do* paint `--muxy-background` on the body.)
-
-### Available CSS variables
+**The variables (the complete injected set):**
 
 | Variable | Use for |
 | --- | --- |
 | `--muxy-background` | Page background |
 | `--muxy-foreground` | Primary text |
 | `--muxy-foreground-muted` | Secondary text, labels, captions |
-| `--muxy-surface` | Cards, buttons, code blocks, input backgrounds |
-| `--muxy-border` | 1px borders, dividers |
+| `--muxy-surface` | Cards, inputs, code blocks, buttons |
+| `--muxy-border` | 1px borders and dividers |
 | `--muxy-hover` | Hover state for buttons / rows |
-| `--muxy-accent` | Primary action color, links, focus rings |
-| `--muxy-accent-soft` | Translucent accent for highlights, badges |
-| `--muxy-diff-add` | Added lines, success states |
-| `--muxy-diff-remove` | Removed lines, error states |
-| `--muxy-diff-hunk` | Hunk headers in diffs |
-| `--muxy-color-scheme` | Mirrors `document.documentElement.style.colorScheme` (`light` / `dark`) |
-| `--muxy-topbar-height` | Height of the app's tab topbar; tracks the user's interface scale. Use it for a tab's own topbar so it aligns with native tabs/panels. |
+| `--muxy-accent` | Primary action, links, focus rings |
+| `--muxy-accent-soft` | Translucent accent for badges/highlights |
+| `--muxy-diff-add` / `--muxy-diff-remove` / `--muxy-diff-hunk` | Diff / success / error / hunk colors |
+| `--muxy-topbar-height` | The app's tab-bar height (see Sizing) |
 
-### Best-practice CSS — copy as a starting point
+(`muxy.theme.colorScheme` gives `"light"`/`"dark"` in JS; there is no `--muxy-color-scheme` CSS var.)
 
-Colors come from theme variables; spacing/font/radius values come from the [design system](#design-system--match-the-apps-metrics) above.
+## Sizing — match the app's scale
 
-```css
-* { box-sizing: border-box; }
+Muxy's native views are built from one scale of values, and **all of them scale with the user's interface-scale setting** (Settings → Interface). Pick from this scale rather than inventing numbers, so your surface tracks scale changes the way native views do. These are the base (100%) values in px:
 
-body {
-  margin: 0;
-  padding: 16px;
-  font: 12px -apple-system, "SF Pro", system-ui, sans-serif;
-  background: var(--muxy-background);
-  color: var(--muxy-foreground);
-}
+**Spacing** (padding, `gap`, margin) — `2 · 4 · 6 · 8 · 10 · 12 · 16 · 20 · 24 · 32`. No in-between values. Panel rows and content pad `10px` left/right; an icon-and-label gap is `8px`; adjacent icon buttons sit `4px` apart.
 
-h2 {
-  font-size: 10px;
-  margin: 16px 0 6px;
-  color: var(--muxy-foreground-muted);
-  text-transform: uppercase;
-  letter-spacing: 0.6px;
-}
+**Font sizes** — `10` caption · `11` footnote/section labels (often uppercased) · **`12` body** (paths, row text) · `13` controls · **`14` titles** (weight 600) · `16`+ headings. Body is `12`, not `13`. Use the system font for UI; `"SF Mono", Menlo, monospace` for code, counts, and hashes.
 
-button {
-  background: var(--muxy-surface);
-  color: var(--muxy-foreground);
-  border: 1px solid var(--muxy-border);
-  border-radius: 6px;
-  padding: 6px 10px;
-  font: inherit;
-  cursor: pointer;
-}
-button:hover  { background: var(--muxy-hover); border-color: var(--muxy-accent); }
-button:active { transform: translateY(1px); }
+**Icons** — `12`–`14px` glyphs at **weight 600** (a thinner default weight is the most common reason an extension's icons look foreign). Custom SVG strokes are `1.5px`, round caps/joins.
 
-.card {
-  background: var(--muxy-surface);
-  border: 1px solid var(--muxy-border);
-  border-radius: 8px;
-  padding: 16px;
-}
+**Controls** — an icon button is a **`24×24` hit target** wrapping a `13`–`14px` glyph; text buttons are `28px` tall with `10px` horizontal padding.
 
-.badge {
-  font-family: "SF Mono", Menlo, monospace;
-  font-size: 11px;
-  padding: 2px 8px;
-  border-radius: 4px;
-  background: var(--muxy-surface);
-  color: var(--muxy-accent);
-  border: 1px solid var(--muxy-border);
-}
+**Radii** — `4` chips/badges · `6` buttons/inputs · `8` cards/panels · `10` large containers. Buttons are `4`–`6`, not `5`.
 
-pre, code {
-  font-family: "SF Mono", Menlo, monospace;
-  background: var(--muxy-surface);
-  color: var(--muxy-foreground);
-}
+**Topbar height is the exception — never hardcode it.** It scales with interface scale and is injected pre-scaled as `--muxy-topbar-height`. A tab fills its whole region, so render your own topbar to match native tabs (so split panes line up): use that variable for the height and keep `box-sizing: content-box` so the 1px `border-bottom` lands on the same line as native tabs. Omit the topbar for edge-to-edge content.
 
-.diff-add    { color: var(--muxy-diff-add); }
-.diff-remove { color: var(--muxy-diff-remove); }
-.diff-hunk   { color: var(--muxy-diff-hunk); }
-```
-
-### Theming rules
-
-1. **No hex literals for UI chrome.** Use `var(--muxy-…)` everywhere. The only exception is decorative art that is meant to be theme-independent.
-2. **Treat `--muxy-accent` as the only saturated color.** Use it sparingly — for the primary action, focus rings, key numbers — so it stays distinctive.
-3. **Use `--muxy-surface` for elevation.** Cards, code blocks, inputs, and buttons share one surface color; depth comes from `--muxy-border` and `--muxy-hover`, not from new colors.
-4. **Make hover states obvious.** `background: var(--muxy-hover); border-color: var(--muxy-accent);` is the standard pattern.
-5. **Light-on-accent text** — when filling a chip or pill with `var(--muxy-accent)`, set its text color to `var(--muxy-background)` so it stays legible in both light and dark.
-6. **Respect `prefers-reduced-motion`.** Muxy users opt into Reduce Motion at the OS level; avoid long transitions, large translations, or autoplay animations.
-7. **Don't sniff `colorScheme` to pick colors.** Variables already invert. Only branch on `muxy.theme.colorScheme` for things variables can't express (for example, swapping a logo image).
-8. **JS-driven re-renders must re-read the theme.** Use `muxy.onThemeChange(theme => …)` to redraw canvas/SVG that doesn't pick up CSS variables automatically.
-
-### Theming example (JS-side)
-
-This is the pattern from the demo playground tab:
-
-```js
-const badge = document.createElement('span');
-badge.style.cssText =
-  'padding:1px 6px;border-radius:3px;' +
-  'background:var(--muxy-accent);color:var(--muxy-background);';
-badge.textContent = `${muxy.theme.colorScheme} · ${muxy.theme.accent}`;
-document.body.appendChild(badge);
-
-muxy.onThemeChange((theme) => {
-  badge.textContent = `${theme.colorScheme} · ${theme.accent}`;
-});
-```
-
-## Design system — match the app's metrics
-
-Theme variables make an extension the right *colors*; the design system makes it the right *shape*. Muxy's native surfaces — the source-control panel, the file editor, the markdown view, the diff viewer, popovers — are all built from one scale of spacing, font, icon, control, and radius values. Reuse the same numbers and your tab/panel/popover reads as a native part of the app instead of a webpage embedded in it. Pick *from this scale* rather than inventing values; the spacing between two close controls is `4px`, not `5px`, because every native control uses `4px`.
-
-These are the app's base values at the default interface scale, in points (1pt = 1px in a webview at 100%). Native views scale every one of them by the user's **Settings → Interface** scale; the one value Muxy injects pre-scaled is `--muxy-topbar-height` (see [Tab topbar](#tab-topbar-recommended)), so align any topbar to that variable and use the fixed values below for everything else.
-
-### Spacing scale
-
-Use for padding, `gap`, and margins. The whole app is built from this 2/4/6/8/10/12/16/20/24/32 ramp — no in-between values.
-
-| px | Where it's used |
-| --- | --- |
-| `2` | Hairline gaps, badge vertical padding |
-| `4` | Gap between adjacent icon buttons in a strip |
-| `6` | Gap between controls in a header |
-| `8` | Gap between an icon and its label; standard row inner gap |
-| `10` | **Standard leading/trailing padding** for panel rows and content |
-| `12` | Topbar horizontal padding; comfortable block padding |
-| `16` | Section padding, card padding |
-| `20`, `24`, `32` | Larger section/region spacing |
-
-The single most common mismatch: native rows pad `10px` left and right (the row's leading padding also indents by depth in trees). Use `padding: 0 10px` on rows, not `16px`.
-
-### Font sizes
-
-System font (`-apple-system, system-ui`) for UI; `"SF Mono", Menlo, monospace` for code, counts, and hashes.
-
-| px | Role | Native usage |
-| --- | --- | --- |
-| `9` | Micro labels | Ref badges on commits |
-| `10` | Caption | Smallest captions |
-| `11` | Footnote | Section-header labels (often uppercased), status letters, small metadata |
-| `12` | **Body** | File paths, primary row text |
-| `13` | Emphasis | Default control/icon-button text |
-| `14` | Headline | Tab/panel titles |
-| `15`, `16` | Title | Larger headings |
-| `20`, `24`, `28` | Display | Hero numbers only |
-
-Body text is `12px`, not `13px`. Titles in a topbar are `14px`, weight `600`.
-
-### Icon sizes & stroke
-
-SF Symbols render as a font, so an icon's size is a font size and its stroke is the font weight. Native icons sit at **`12`–`14px`** and use **`weight: .semibold`** (≈ CSS `font-weight: 600`). Inline icon buttons in rows render at `11px`. Hairline vector strokes (custom SVG glyphs like the diff icon) use **`1.5px`** stroke width with round caps/joins.
-
-| px | Icon role |
-| --- | --- |
-| `10` | Inline/decorative |
-| `11` | Row action buttons |
-| `12` | Small toolbar icons |
-| `14` | Standard icon |
-| `16`, `20`, `28` | Large/feature icons |
-
-When using an icon font or SVG, match `font-weight: 600` / `stroke-width: 1.5px` — a thinner default weight is the most common reason an extension's icons look foreign.
-
-### Controls (buttons, hit targets)
-
-Clickable controls are sized by a fixed square hit target, not by their content. An icon button is a `24×24` tap target wrapping a `13px` glyph; the glyph is centered and the box gives it consistent spacing.
-
-| px | Control |
-| --- | --- |
-| `20` | Small control / compact hit target |
-| `24` | **Standard icon-button hit target** |
-| `32` | Large control; header height; topbar height |
-
-Text buttons (Commit / Pull / Push) are `28px` tall with `10px` horizontal padding.
-
-### Corner radii
-
-| px | Use for |
-| --- | --- |
-| `4` | Buttons, small chips, badges |
-| `6` | Inputs, medium controls |
-| `8` | Cards, panels, a popover's inner boxes |
-| `10` | Large containers |
-
-Buttons are `4`–`6px`, not `5px`. Cards are `8px`.
-
-### CSS variables for these tokens
-
-Spacing, font, icon, control, and radius values are **not** injected as CSS variables — only colors and `--muxy-topbar-height` are. Declare the scale once at the top of your stylesheet and reference it everywhere, so a single edit retunes the whole extension and there are no stray magic numbers:
+Declare the scale once at the top of your stylesheet and reference it everywhere, so there are no stray magic numbers:
 
 ```css
 :root {
-  --s1: 2px;  --s2: 4px;  --s3: 6px;  --s4: 8px;  --s5: 10px;
-  --s6: 12px; --s7: 16px; --s8: 20px; --s9: 24px; --s10: 32px;
-
-  --font-caption: 10px; --font-footnote: 11px; --font-body: 12px;
-  --font-emphasis: 13px; --font-headline: 14px;
-
-  --icon: 14px; --icon-sm: 12px; --icon-row: 11px;
-  --control: 24px; --radius: 6px; --radius-card: 8px;
-  --row-height: 34px;
+  --s1:2px; --s2:4px; --s3:6px; --s4:8px; --s5:10px;
+  --s6:12px; --s7:16px; --s8:20px; --s9:24px; --s10:32px;
+  --font-caption:10px; --font-footnote:11px; --font-body:12px;
+  --font-emphasis:13px; --font-title:14px;
+  --icon-sm:12px; --icon:14px; --control:24px;
+  --radius:6px; --radius-card:8px; --row-height:34px;
 }
 ```
 
-### A native-feeling row (source-control panel as the reference)
+## Behavior
 
-The file row in the source-control panel is the canonical layout: a fixed `34px` height, `10px` side padding, `8px` gap, a `12px`-body label that flexes, a status icon, and trailing metadata in mono.
+- **Least privilege.** Declare a permission only when you add the call that needs it.
+- **Make hover and active states visible** in both light and dark — `background: var(--muxy-hover); border-color: var(--muxy-accent);` is the standard pattern.
+- **Respect `prefers-reduced-motion`** — Muxy users opt into Reduce Motion at the OS level; avoid long transitions, large translations, autoplay.
+- **No hardcoded `~/.config/muxy` paths** from inside the extension — rely on the working directory Muxy sets, or pass `cwd` to `exec`.
 
-```css
-.row {
-  display: flex;
-  align-items: center;
-  gap: var(--s4);                 /* 8px */
-  height: var(--row-height);      /* 34px */
-  padding: 0 var(--s5);           /* 10px L/R */
-  font-size: var(--font-body);    /* 12px */
-  color: var(--muxy-foreground);
-}
-.row:hover { background: var(--muxy-hover); }
-.row .icon { width: var(--icon-row); font-weight: 600; color: var(--muxy-foreground-muted); }
-.row .path { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.row .stat { font-family: "SF Mono", Menlo, monospace; }
+## Checklist
 
-.section-label {
-  font-size: var(--font-footnote); /* 11px */
-  text-transform: uppercase;
-  letter-spacing: 0.6px;
-  color: var(--muxy-foreground-muted);
-  padding: 0 var(--s5);
-}
-
-.icon-button {
-  width: var(--control); height: var(--control);  /* 24×24 hit target */
-  display: inline-flex; align-items: center; justify-content: center;
-  font-size: var(--font-emphasis); font-weight: 600;     /* 13px glyph */
-  color: var(--muxy-foreground-muted);
-  border: none; background: none; border-radius: var(--radius); cursor: pointer;
-}
-.icon-button:hover { color: var(--muxy-foreground); background: var(--muxy-hover); }
-```
-
-## End-to-end example (minimal extension)
-
-A complete "hello-world" extension that adds a palette command, a tab, and a theme-aware UI:
-
-```
-hello-world/
-├── package.json
-├── vite.config.js
-└── src/
-    └── tabs/
-        ├── index.html
-        └── styles.css
-```
-
-This extension only opens a tab from a palette command, so it declares no background script and runs no resident process. After cloning or scaffolding, run `npm install`, then `npm run build` to emit `dist/`.
-
-```json
-// package.json
-{
-  "name": "hello-world",
-  "version": "0.1.0",
-  "private": true,
-  "type": "module",
-  "scripts": { "dev": "vite", "build": "vite build" },
-  "devDependencies": { "vite": "^5.0.0" },
-  "muxy": {
-    "description": "Minimal Muxy extension",
-    "permissions": ["tabs:write"],
-    "tabTypes": [
-      { "id": "main", "title": "Hello", "entry": "tabs/index.html" }
-    ],
-    "commands": [
-      {
-        "id": "open",
-        "title": "Hello World: Open",
-        "action": { "kind": "openTab", "tabType": "main" }
-      }
-    ]
-  }
-}
-```
-
-```html
-<!-- src/tabs/index.html -->
-<!DOCTYPE html>
-<html>
-<head>
-  <meta charset="utf-8">
-  <link rel="stylesheet" href="styles.css">
-</head>
-<body>
-  <header class="topbar">
-    <span class="title">Hello</span>
-    <span class="actions"><button id="say">Toast</button></span>
-  </header>
-  <main class="content">
-    <h1>Hello, <span id="who">world</span>!</h1>
-  </main>
-  <script>
-    document.getElementById('who').textContent = muxy.extensionID;
-    document.getElementById('say').addEventListener('click', () =>
-      muxy.notifications.notify({ title: 'Hello', body: `theme: ${muxy.theme.colorScheme}` })
-    );
-  </script>
-</body>
-</html>
-```
-
-```css
-/* src/tabs/styles.css */
-body {
-  margin: 0; display: flex; flex-direction: column; height: 100vh;
-  font: 12px -apple-system, system-ui, sans-serif;
-  background: var(--muxy-background);
-  color: var(--muxy-foreground);
-}
-.topbar {
-  box-sizing: content-box;
-  height: var(--muxy-topbar-height);
-  display: flex; align-items: center; gap: 8px; padding: 0 12px;
-  background: var(--muxy-background);
-  border-bottom: 1px solid var(--muxy-border);
-  flex: 0 0 auto;
-}
-.topbar .title   { color: var(--muxy-foreground); font-weight: 600; }
-.topbar .actions { margin-left: auto; display: flex; gap: 4px; }
-.content { flex: 1; overflow: auto; padding: 24px; }
-h1 { font-size: 16px; color: var(--muxy-accent); }
-button {
-  background: var(--muxy-surface);
-  color: var(--muxy-foreground);
-  border: 1px solid var(--muxy-border);
-  border-radius: 6px;
-  padding: 6px 10px;
-}
-button:hover { background: var(--muxy-hover); border-color: var(--muxy-accent); }
-```
-
-> Note: `muxy.notifications.notify` requires `notifications:write`. Add it to `permissions` if you use it.
-
-## End-to-end example (popover)
-
-A status-bar item that opens a self-sizing popover. The popover replaces what used to be a built-in popover (e.g. an AI-usage meter): a small, read-mostly surface anchored to its item.
-
-```json
-// package.json
-{
-  "name": "status-popover",
-  "version": "0.1.0",
-  "private": true,
-  "type": "module",
-  "scripts": { "dev": "vite", "build": "vite build" },
-  "devDependencies": { "vite": "^5.0.0" },
-  "muxy": {
-    "permissions": ["panels:write"],
-    "popovers": [
-      { "id": "summary", "title": "Summary", "entry": "popovers/summary.html", "width": 280, "height": 200 }
-    ],
-    "commands": [
-      { "id": "open-summary", "title": "Status: Summary", "action": { "kind": "openPopover", "popover": "summary" } }
-    ],
-    "statusBarItems": [
-      { "id": "summary", "icon": { "symbol": "gauge" }, "text": "Status", "side": "right", "command": "open-summary" }
-    ]
-  }
-}
-```
-
-```html
-<!-- src/popovers/summary.html -->
-<!DOCTYPE html>
-<html>
-<head>
-  <meta charset="utf-8">
-  <style>
-    /* Popover: transparent body so the native macOS popover material shows through. */
-    body { margin: 0; font: 12px -apple-system, system-ui, sans-serif;
-           background: transparent; color: var(--muxy-foreground); }
-    .box { padding: 16px; display: flex; flex-direction: column; gap: 10px; }
-    .line { color: var(--muxy-foreground-muted); }
-    button { font: inherit; padding: 6px 10px; border-radius: 6px;
-             background: var(--muxy-surface); color: inherit;
-             border: 1px solid var(--muxy-border); cursor: pointer; }
-    button:hover { background: var(--muxy-hover); border-color: var(--muxy-accent); }
-  </style>
-</head>
-<body>
-  <div class="box">
-    <strong>Summary</strong>
-    <span class="line" id="line">loading…</span>
-    <button onclick="muxy.popover.close()">Close</button>
-  </div>
-  <script>
-    document.getElementById('line').textContent = `running as ${muxy.extensionID}`;
-    window.addEventListener('load', () =>
-      muxy.popover.resize(
-        document.documentElement.scrollWidth,
-        document.documentElement.scrollHeight
-      )
-    );
-  </script>
-</body>
-</html>
-```
-
-The popover anchors to the status-bar item, opens/toggles when it is clicked, and dismisses on outside click. No background script is needed.
-
-## Editing & reload workflow
-
-This is an npm + Vite project, so the loop is:
-
-1. **`npm install`** — once after scaffolding or cloning (and whenever dependencies change).
-2. **`npm run dev`** — iterate on `src/` with Vite's dev server / fast feedback while building UI.
-3. **`npm run build`** — bundle `src/` into `dist/`. Muxy installs and reads `dist/`, so nothing takes effect in the app until you build. The publishing pipeline runs this same `npm run build`.
-4. **Reload** — click **Reload** in the Muxy Extensions modal. Muxy terminates the running process, re-reads the `"muxy"` manifest from `package.json`, and re-validates the built files in `dist/`.
-
-After editing the manifest in `package.json`, scripts, tab HTML/CSS/JS, or the background script, **rebuild (`npm run build`) and then Reload** — a Reload alone won't pick up source changes that haven't been built into `dist/`. Tabs are not auto-refreshed — close and reopen them, or use `tabs.open` to get a fresh instance.
-
-## Quick checklist before shipping
-
-- [ ] `package.json` parses; `name`/`version` are top-level and `name` equals the directory name; `scripts.build` is present.
-- [ ] `npm run build` succeeds and every path declared in `"muxy"` (entries, `background`, scripts, icons, assets) exists under `dist/`.
-- [ ] `muxy.permissions` declares only what is actually used.
-- [ ] Every CSS rule for UI chrome uses `var(--muxy-…)`.
-- [ ] Spacing, font, icon, control, and radius values come from the [design-system scale](#design-system--match-the-apps-metrics) — no off-ramp magic numbers (rows pad `10px`, body text is `12px`, icons are `12`–`14px` at weight `600`).
-- [ ] `muxy.onThemeChange` is wired for any canvas/SVG/JS-rendered color.
-- [ ] Hover and active states are visible in both light and dark themes.
-- [ ] No hardcoded paths to `~/.config/muxy` from inside the extension — use `muxy.exec({ cwd: … })` or rely on the working directory Muxy sets.
-- [ ] Event-driven work happens in the background script, not in tab JS, so closing a tab does not lose state. No background script unless events or background `muxy.exec` are needed.
+- [ ] Every color is `var(--muxy-…)`; `muxy.onThemeChange` wired for any JS-drawn color.
+- [ ] Spacing, font, icon, control, and radius values come from the scale above — no off-ramp numbers (rows pad `10px`, body is `12px`, icons `12`–`14px` at weight 600).
+- [ ] Tab topbar uses `--muxy-topbar-height` with `box-sizing: content-box`.
+- [ ] Hover/active states are visible in both themes.
+- [ ] `permissions` declares only what is used.
+- [ ] Event-driven work is in `background.js`, not tab JS. No background script unless events or background `exec` are needed.
+- [ ] Built with `npm run build`, then **Reload** in the Extensions modal (a Reload alone won't pick up unbuilt source).

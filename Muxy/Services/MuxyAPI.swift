@@ -3,6 +3,7 @@ import Foundation
 enum APIError: Error, Equatable {
     case invalidArguments(String)
     case noActiveProject
+    case noActiveWorkspace
     case noFocusedArea
     case projectStoreUnavailable
     case worktreeStoreUnavailable
@@ -22,6 +23,7 @@ enum APIError: Error, Equatable {
         switch self {
         case let .invalidArguments(detail): detail
         case .noActiveProject: "no active project"
+        case .noActiveWorkspace: "no active workspace"
         case .noFocusedArea: "no focused area"
         case .projectStoreUnavailable: "project store unavailable"
         case .worktreeStoreUnavailable: "worktree store unavailable"
@@ -171,6 +173,7 @@ enum MuxyAPI {
             "popover.resize",
             "topbar.set",
             "statusbar.set",
+            "tabs.open",
         ]).union(gitVerbs).union(filesVerbs)
 
         static let filesVerbs: Set<String> = [
@@ -824,12 +827,17 @@ enum MuxyAPI {
             appState: AppState,
             callingExtensionID: String? = nil
         ) async -> Result<Void, APIError> {
-            guard let projectID = appState.activeProjectID else {
-                return .failure(.noActiveProject)
+            let target: OpenTabTarget
+            switch resolveOpenTarget(appState: appState) {
+            case let .success(resolved):
+                target = resolved
+            case let .failure(error):
+                return .failure(error)
             }
             switch request.kind {
             case .terminal:
-                appState.dispatch(.createTab(projectID: projectID, areaID: nil))
+                activateOpenTarget(target, appState: appState)
+                appState.dispatch(.createTab(projectID: target.key.projectID, areaID: target.areaID))
                 return .success(())
             case .extensionWebView:
                 guard let payload = request.extensionPayload else {
@@ -853,9 +861,10 @@ enum MuxyAPI {
                         return .failure(.consentDenied(verb: ExtensionGatedVerb.tabsOpenForeign.rawValue))
                     }
                 }
+                activateOpenTarget(target, appState: appState)
                 appState.dispatch(.createExtensionTab(
-                    projectID: projectID,
-                    areaID: nil,
+                    projectID: target.key.projectID,
+                    areaID: target.areaID,
                     request: AppState.CreateExtensionTabRequest(
                         extensionID: payload.id,
                         tabTypeID: payload.tabType,
@@ -866,6 +875,57 @@ enum MuxyAPI {
                 ))
                 return .success(())
             }
+        }
+
+        private static func activateOpenTarget(_ target: OpenTabTarget, appState: AppState) {
+            appState.dispatch(.navigate(
+                projectID: target.key.projectID,
+                worktreeID: target.key.worktreeID,
+                areaID: target.areaID,
+                tabID: nil
+            ))
+        }
+
+        private struct OpenTabTarget {
+            let key: WorktreeKey
+            let areaID: UUID
+        }
+
+        private static func resolveOpenTarget(appState: AppState) -> Result<OpenTabTarget, APIError> {
+            if let entry = appState.navigation.current {
+                let key = WorktreeKey(projectID: entry.projectID, worktreeID: entry.worktreeID)
+                if let target = openTarget(key: key, preferredAreaID: entry.areaID, appState: appState) {
+                    return .success(target)
+                }
+            }
+            if let projectID = appState.activeProjectID,
+               let key = appState.activeWorktreeKey(for: projectID),
+               let target = openTarget(key: key, preferredAreaID: appState.focusedAreaID[key], appState: appState)
+            {
+                return .success(target)
+            }
+            if appState.workspaceRoots.count == 1,
+               let key = appState.workspaceRoots.keys.first,
+               let target = openTarget(key: key, preferredAreaID: appState.focusedAreaID[key], appState: appState)
+            {
+                return .success(target)
+            }
+            return .failure(appState.workspaceRoots.isEmpty ? .noActiveProject : .noActiveWorkspace)
+        }
+
+        private static func openTarget(
+            key: WorktreeKey,
+            preferredAreaID: UUID?,
+            appState: AppState
+        ) -> OpenTabTarget? {
+            guard let root = appState.workspaceRoots[key] else { return nil }
+            if let preferredAreaID,
+               let area = root.findArea(id: preferredAreaID)
+            {
+                return OpenTabTarget(key: key, areaID: area.id)
+            }
+            guard let area = root.allAreas().first else { return nil }
+            return OpenTabTarget(key: key, areaID: area.id)
         }
     }
 }

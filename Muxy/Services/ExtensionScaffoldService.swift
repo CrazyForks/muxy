@@ -163,6 +163,9 @@ enum ExtensionScaffoldService {
           top level; all Muxy fields live under the `muxy` key. A `build` script
           (Vite) is required.
         - `vite.config.js` — builds to `dist/`, the directory Muxy installs.
+        - `scripts/copy-manifest.mjs` — copies `package.json` into `dist/` after
+          the Vite build. Only `dist/` ships, so the manifest must live inside it;
+          `build` runs this for you.
         - `panel/` + `src/` — your source. The kit ships a working panel, a topbar
           item, and a command; edit them or add your own.
 

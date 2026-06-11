@@ -7,6 +7,8 @@ description: Best-practice guide for authoring a Muxy extension — how it shoul
 
 A Muxy extension is an npm + [Vite](https://vitejs.dev) project: source under `src/`, an entry HTML that `vite build` emits into `dist/`, and Muxy reads `dist/` when present (otherwise the project folder). The manifest is the `"muxy"` object in `package.json`. There is no fixed folder layout — every `entry`/`background`/icon path is an arbitrary relative path inside the build output (the vanilla starter kit emits its panel to `panel/index.html`); `package.json` and `dist/` are the only names Muxy fixes. During development you don't copy into the config folder — **Load Unpacked** in the Extensions modal points Muxy at any folder (your git checkout *is* the install).
 
+**The `build` script must copy `package.json` into `dist/`.** The publish pipeline ships **only** `dist/`, and the app reads the manifest from the install root — so the manifest has to be inside the build output. `vite build` alone emits your entry/asset paths but **not** the manifest, so use `"build": "vite build && node scripts/copy-manifest.mjs"` where `copy-manifest.mjs` copies `package.json` into `dist/`. Easy to miss because **Load Unpacked** falls back to the root `package.json` in dev, so it loads locally but fails validation/install when published. The vanilla starter kit already wires this up.
+
 **This skill is the guidance layer — how an extension should look and behave.** For the API and manifest mechanics (every field, the permission strings, the full `window.muxy` surface, events, scripts), read the reference docs. Start from the LLM-friendly index, which lists every page and links to its raw Markdown source:
 
 > **<https://muxy.app/llms.txt>**
@@ -109,4 +111,5 @@ Declare the scale once at the top of your stylesheet and reference it everywhere
 - [ ] Hover/active states are visible in both themes.
 - [ ] `permissions` declares only what is used.
 - [ ] Durable event-driven work is in `background.js`, not tab JS. Webview coordination uses `extension.*` events. No background script unless events, shared state, or background `exec` are needed.
+- [ ] `build` copies `package.json` into `dist/` (e.g. `vite build && node scripts/copy-manifest.mjs`) — only `dist/` ships, so the manifest must be inside it.
 - [ ] Built with `npm run build`, then **Reload** in the Extensions modal (a Reload alone won't pick up unbuilt source).

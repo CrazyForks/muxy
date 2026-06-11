@@ -4,7 +4,9 @@ Every extension is an npm + [Vite](https://vitejs.dev) project. Its manifest is 
 
 Identity (`name` and `version`) lives at the **top level** of `package.json` — npm's single source of truth. **Every other manifest field** (`description`, `background`, `events`, `permissions`, `tabTypes`, `panels`, `popovers`, `sidebar`, `commands`, `topbarItems`, `statusBarItems`, `settings`, `remoteMethods`, `marketplace`) lives under the `muxy` key.
 
-`package.json` must also declare a `build` script. The publishing pipeline runs `npm run build` (Vite) and ships the build output directory, `dist/`. The app installs and reads from `dist/`, so every entry/asset path inside `muxy` (popover/tab `entry`, `background`, marketplace `icon`/`screenshots`) resolves against the build output, not your source tree.
+`package.json` must also declare a `build` script. The publishing pipeline runs `npm run build` (Vite) and ships **only** the build output directory, `dist/`. The app installs and reads from `dist/`, so every entry/asset path inside `muxy` (popover/tab `entry`, `background`, marketplace `icon`/`screenshots`) resolves against the build output, not your source tree.
+
+Because only `dist/` ships, **your `build` must copy `package.json` into `dist/`** — `vite build` emits your entry/asset paths but not the manifest. Without the copy, the published `dist/` has no manifest and fails to install. (It still loads in local dev via **Load Unpacked**, which falls back to the root `package.json`, so the gap surfaces only at validation or install time.) Append a copy step: `"build": "vite build && node scripts/copy-manifest.mjs"`. See [Contributing](contributing.md#3-build-and-develop-live) for the script; the vanilla starter kit already includes it.
 
 There is **no fixed folder layout**. Every `entry`/`background`/icon path is an arbitrary relative path inside the build output — point it wherever your build emits the file. The vanilla starter kit emits its panel to `panel/index.html`, but any layout works equally. The only two names Muxy fixes are `package.json` (the manifest) and `dist/` (the build output it ships and reads).
 
@@ -14,7 +16,7 @@ There is **no fixed folder layout**. Every `entry`/`background`/icon path is an 
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "scripts": { "dev": "vite", "build": "vite build" },
+  "scripts": { "dev": "vite", "build": "vite build && node scripts/copy-manifest.mjs" },
   "devDependencies": { "vite": "^5.0.0" },
   "muxy": {
     "$schema": "https://raw.githubusercontent.com/muxy-app/muxy/main/docs/extensions/schema/manifest.schema.json",
@@ -37,7 +39,7 @@ These are standard npm fields read directly from `package.json`. Only `name` and
 | --- | --- | --- | --- |
 | `name` | string | yes | Letters, digits, `-`, `_`, `.` only (no leading dot). Must match the directory name. Used as the extension ID. |
 | `version` | string | yes | Semver. A published `name@version` is immutable; bump for any change. Shown in Settings. |
-| `scripts` | object | yes | npm scripts. Must include a `build` script — the publishing pipeline runs it and ships the resulting `dist/`. |
+| `scripts` | object | yes | npm scripts. Must include a `build` script that copies `package.json` into `dist/` (e.g. `vite build && node scripts/copy-manifest.mjs`) — the publishing pipeline runs it and ships **only** the resulting `dist/`, so the manifest must be inside it. |
 
 ## `muxy` fields
 

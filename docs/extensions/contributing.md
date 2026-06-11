@@ -72,7 +72,14 @@ Muxy** on the detail page unloads one without touching your folder on disk.
 Edit `package.json` to declare what your extension does. Keep `name` (matching the
 directory) and `version` at the top level; put every Muxy manifest field under the
 `muxy` key. `package.json` must declare a `build` script — the publish pipeline
-runs `npm run build` and ships the `dist/` it produces.
+runs `npm run build` and ships **only** the `dist/` it produces.
+
+Because only `dist/` ships, **your `build` must copy `package.json` into `dist/`**
+so the published folder is a self-contained, installable extension with its
+manifest. `vite build` alone does not — it emits your entry/asset paths but not the
+manifest. (It still loads locally via **Load Unpacked**, which falls back to the
+root `package.json`, so this is easy to miss until validation or install fails.)
+Add a one-line copy step after the build:
 
 ```json
 {
@@ -80,7 +87,10 @@ runs `npm run build` and ships the `dist/` it produces.
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "scripts": { "dev": "vite", "build": "vite build" },
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build && node scripts/copy-manifest.mjs"
+  },
   "devDependencies": { "vite": "^5.0.0" },
   "muxy": {
     "$schema": "https://raw.githubusercontent.com/muxy-app/muxy/main/docs/extensions/schema/manifest.schema.json",
@@ -90,6 +100,22 @@ runs `npm run build` and ships the `dist/` it produces.
   }
 }
 ```
+
+`scripts/copy-manifest.mjs`:
+
+```js
+import { copyFile, mkdir } from "node:fs/promises";
+import { resolve } from "node:path";
+
+const root = resolve(import.meta.dirname, "..");
+const dist = resolve(root, "dist");
+
+await mkdir(dist, { recursive: true });
+await copyFile(resolve(root, "package.json"), resolve(dist, "package.json"));
+```
+
+The `vanilla` starter kit already wires this up, so a scaffolded extension is
+correct out of the box.
 
 Build any UI you like — React, Vue, Svelte, or plain HTML/CSS/JS — as long as
 `vite build` emits your entry/asset paths into `dist/`. See the rest of this docs

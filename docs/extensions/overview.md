@@ -24,12 +24,12 @@ Workspace events originate in the main process (`ExtensionEventEmitter` diffs wo
 
 ## Where extensions live
 
-Each installed extension is the `dist/` produced by `npm run build`, with its `package.json` at the root:
+Each installed extension is the `dist/` produced by `npm run build`, with its `package.json` at the root. The publish pipeline ships **only** `dist/`, so the `build` script must copy `package.json` into it (see [Manifest](manifest.md)) — otherwise the install has no manifest:
 
 ```
 ~/.config/muxy/extensions/
   <name>/
-    package.json
+    package.json      # copied into dist/ by the build script
     background.js     # optional; pushed events / extension.* bus / background exec
     …                 # the rest of the build output
 ```

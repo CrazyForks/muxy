@@ -12,6 +12,7 @@ After rebuilding, click **Reload** in the Muxy Extensions modal to pick up chang
 ## Layout
 
 - `panel/index.html` — panel entry, builds to `dist/`.
+- `scripts/copy-manifest.mjs` — copies `package.json` into `dist/` after the Vite build, so the published `dist/` is a self-contained, installable folder. `build` runs it.
 - `src/main.js` — mounts the panel onto `#root`.
 - `src/panel/app.js` — the panel UI, rendered with the `h()` DOM helper.
 - `src/lib/` — tiny `dom` and `icon` helpers.

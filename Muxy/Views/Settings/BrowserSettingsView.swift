@@ -2,6 +2,7 @@ import SwiftUI
 
 struct BrowserSettingsView: View {
     @Environment(BrowserProfileStore.self) private var profileStore
+    @AppStorage(BrowserPreferences.enabledKey) private var browserEnabled = true
     @AppStorage(BrowserPreferences.openLinksInBuiltInBrowserKey) private var openLinksInBuiltInBrowser = false
 
     @State private var editorMode: BrowserProfileEditorMode?
@@ -14,35 +15,48 @@ struct BrowserSettingsView: View {
     toolbar. Import brings an existing browser's cookies so tabs start signed in.
     """
 
+    private static let disabledFooter = """
+    The built-in browser is off. Browser tabs, the toolbar globe, and terminal-link opening are \
+    disabled, and terminal links open in your system browser.
+    """
+
     var body: some View {
         SettingsContainer {
-            SettingsSection("General") {
+            SettingsSection("General", footer: browserEnabled ? nil : Self.disabledFooter, showsDivider: browserEnabled) {
                 SettingsToggleRow(
-                    label: "Open terminal links in built-in browser",
-                    isOn: $openLinksInBuiltInBrowser
+                    label: "Enable Built-in Browser",
+                    isOn: $browserEnabled
                 )
-                SettingsRow("Default Profile") {
-                    Picker("", selection: defaultProfileBinding) {
-                        ForEach(profileStore.profiles) { profile in
-                            Text(profile.name).tag(profile.id)
+                if browserEnabled {
+                    SettingsToggleRow(
+                        label: "Open terminal links in built-in browser",
+                        isOn: $openLinksInBuiltInBrowser
+                    )
+                    SettingsRow("Default Profile") {
+                        Picker("", selection: defaultProfileBinding) {
+                            ForEach(profileStore.profiles) { profile in
+                                Text(profile.name).tag(profile.id)
+                            }
                         }
+                        .labelsHidden()
+                        .frame(width: SettingsMetrics.controlWidth, alignment: .trailing)
                     }
-                    .labelsHidden()
-                    .frame(width: SettingsMetrics.controlWidth, alignment: .trailing)
                 }
             }
 
-            SettingsSection("Profiles", footer: Self.profilesFooter, showsDivider: false) {
-                ForEach(profileStore.profiles) { profile in
-                    BrowserProfileRow(
-                        profile: profile,
-                        onRename: { editorMode = .edit(profile) },
-                        onImport: { importTarget = profile },
-                        onClearData: { profilePendingClear = profile },
-                        onDelete: { profilePendingDelete = profile }
-                    )
+            if browserEnabled {
+                SettingsSection("Profiles", footer: Self.profilesFooter, showsDivider: false) {
+                    ForEach(profileStore.profiles) { profile in
+                        BrowserProfileRow(
+                            profile: profile,
+                            onRename: { editorMode = .edit(profile) },
+                            onImport: { importTarget = profile },
+                            onClearData: { profilePendingClear = profile },
+                            onDelete: { profilePendingDelete = profile }
+                        )
+                    }
+                    addButton
                 }
-                addButton
             }
         }
         .sheet(item: $editorMode) { mode in

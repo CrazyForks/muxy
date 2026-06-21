@@ -3,7 +3,7 @@ import Testing
 
 @testable import Muxy
 
-@Suite("BrowserProfileTab")
+@Suite("BrowserProfileTab", .serialized)
 @MainActor
 struct BrowserProfileTabTests {
     private let testPath = "/tmp/test"
@@ -49,6 +49,34 @@ struct BrowserProfileTabTests {
 
         let tab = focusedArea(in: state, projectID: projectID)?.activeTab
         #expect(tab?.content.browserState?.profileID == profileID)
+    }
+
+    @Test("createBrowserTab is a no-op when the browser is disabled")
+    func disabledBlocksCreation() {
+        let original = UserDefaults.standard.object(forKey: BrowserPreferences.enabledKey)
+        defer {
+            if let original {
+                UserDefaults.standard.set(original, forKey: BrowserPreferences.enabledKey)
+            } else {
+                UserDefaults.standard.removeObject(forKey: BrowserPreferences.enabledKey)
+            }
+        }
+        BrowserPreferences.isEnabled = false
+
+        let projectID = UUID()
+        let worktreeID = UUID()
+        var state = makeState(projectID: projectID, worktreeID: worktreeID)
+
+        let action = AppState.Action.createBrowserTab(
+            projectID: projectID,
+            areaID: nil,
+            url: URL(string: "https://muxy.app"),
+            profileID: BrowserProfile.defaultID
+        )
+        _ = WorkspaceReducer.reduce(action: action, state: &state)
+
+        let area = focusedArea(in: state, projectID: projectID)
+        #expect(area?.tabs.contains { $0.kind == .browser } == false)
     }
 
     @Test("browser profile survives snapshot round-trip")

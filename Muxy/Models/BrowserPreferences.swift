@@ -1,8 +1,17 @@
 import Foundation
 
 enum BrowserPreferences {
+    static let enabledKey = "muxy.browser.enabled"
     static let openLinksInBuiltInBrowserKey = "muxy.browser.openLinksInBuiltIn"
     static let defaultProfileIDKey = "muxy.browser.defaultProfileID"
+
+    static var isEnabled: Bool {
+        get {
+            guard UserDefaults.standard.object(forKey: enabledKey) != nil else { return true }
+            return UserDefaults.standard.bool(forKey: enabledKey)
+        }
+        set { UserDefaults.standard.set(newValue, forKey: enabledKey) }
+    }
 
     static var openLinksInBuiltInBrowser: Bool {
         get { UserDefaults.standard.bool(forKey: openLinksInBuiltInBrowserKey) }

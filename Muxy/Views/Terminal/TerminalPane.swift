@@ -352,7 +352,7 @@ struct TerminalBridge: NSViewRepresentable {
     }
 
     private static func openExternalLink(_ url: URL, appState: AppState) -> Bool {
-        if BrowserPreferences.openLinksInBuiltInBrowser {
+        if BrowserPreferences.isEnabled, BrowserPreferences.openLinksInBuiltInBrowser {
             return appState.openInBuiltInBrowser(url)
         }
         return NSWorkspace.shared.open(url)

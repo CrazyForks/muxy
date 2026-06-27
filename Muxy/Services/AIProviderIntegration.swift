@@ -13,8 +13,15 @@ protocol AIProviderIntegration {
     var hookScriptExtension: String { get }
 
     func isToolInstalled() -> Bool
+    func isHookInstalled() -> Bool
     func install(hookScriptPath: String) throws
     func uninstall() throws
+}
+
+extension AIProviderIntegration {
+    func isHookInstalled() -> Bool {
+        false
+    }
 }
 
 extension AIProviderIntegration {
@@ -89,6 +96,7 @@ final class AIProviderRegistry {
         #if DEBUG
         guard shouldInstallHooksInDebug() else {
             logger.info("Skipping AI hooks install in dev mode (set FF_AI_HOOKS=true to enable)")
+            await refreshInstalledHooks()
             return
         }
         #endif
@@ -120,6 +128,20 @@ final class AIProviderRegistry {
                 logger.info("Installed \(provider.displayName) integration")
             } catch {
                 logger.error("Failed to install \(provider.displayName): \(error.localizedDescription)")
+            }
+        }
+    }
+
+    private func refreshInstalledHooks() async {
+        for provider in providers where provider.isEnabled && provider.isHookInstalled() {
+            guard let hookScript = MuxyNotificationHooks
+                .scriptPath(named: provider.hookScriptName, extension: provider.hookScriptExtension)
+            else { continue }
+            do {
+                try provider.install(hookScriptPath: hookScript)
+                logger.info("Refreshed \(provider.displayName) hook to the bundled version")
+            } catch {
+                logger.warning("Failed to refresh \(provider.displayName) hook: \(error.localizedDescription)")
             }
         }
     }
@@ -176,9 +198,13 @@ final class AIProviderRegistry {
         case .osc:
             "terminal"
         case let .aiProvider(id):
-            providers.first(where: { $0.id == id })?.iconName ?? "sparkles"
+            iconName(forProviderID: id) ?? "sparkles"
         case .socket:
             "network"
         }
+    }
+
+    func iconName(forProviderID id: String) -> String? {
+        providers.first(where: { $0.id == id })?.iconName
     }
 }

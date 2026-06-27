@@ -4,7 +4,7 @@ struct OpenCodeProvider: AIProviderIntegration {
     let id = "opencode"
     let displayName = "OpenCode"
     let socketTypeKey = "opencode"
-    let iconName = "sparkles"
+    let iconName = "opencode"
     let executableNames = ["opencode"]
 
     private static let pluginsDir = NSHomeDirectory() + "/.opencode/plugins"
@@ -21,6 +21,10 @@ struct OpenCodeProvider: AIProviderIntegration {
             "/opt/homebrew/bin/opencode",
         ]
         return paths.contains { FileManager.default.isExecutableFile(atPath: $0) }
+    }
+
+    func isHookInstalled() -> Bool {
+        FileManager.default.fileExists(atPath: Self.pluginPath)
     }
 
     func install(hookScriptPath: String) throws {

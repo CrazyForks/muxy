@@ -232,6 +232,13 @@ struct TerminalBridge: NSViewRepresentable {
         view.onOfflineChange = { [weak state] offline in
             state?.isOffline = offline
         }
+        view.onDetectedAgentChange = { [weak state] providerID in
+            guard let paneID = state?.id else { return }
+            DetectedAgentStore.shared.setAgent(providerID, for: paneID)
+            if providerID == nil {
+                AgentStatusStore.shared.markIdleIfActive(paneID: paneID)
+            }
+        }
         view.updateResumeWorkingDirectory(state.currentWorkingDirectory ?? state.projectPath)
         configureSearchCallbacks(view)
         configureFileOpenCallback(view)
@@ -275,6 +282,13 @@ struct TerminalBridge: NSViewRepresentable {
         }
         nsView.onOfflineChange = { [weak state] offline in
             state?.isOffline = offline
+        }
+        nsView.onDetectedAgentChange = { [weak state] providerID in
+            guard let paneID = state?.id else { return }
+            DetectedAgentStore.shared.setAgent(providerID, for: paneID)
+            if providerID == nil {
+                AgentStatusStore.shared.markIdleIfActive(paneID: paneID)
+            }
         }
         configureSearchCallbacks(nsView)
         configureFileOpenCallback(nsView)

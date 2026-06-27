@@ -38,6 +38,10 @@ final class GhosttyTerminalNSView: NSView {
     var processExitHandled = false
 
     var onOfflineChange: ((Bool) -> Void)?
+    var onDetectedAgentChange: ((String?) -> Void)?
+    nonisolated(unsafe) private var agentDetectionCoalesced: DispatchWorkItem?
+    private var detectedAgentProviderID: String?
+    private var agentExecutables: [AIAgentExecutable] = []
     private var hasMaterializedOnce = false
     private var isOfflinedState = false
     private var offlineInvisibleAt: Date?
@@ -224,6 +228,7 @@ final class GhosttyTerminalNSView: NSView {
         }
 
         applyOcclusionState()
+        startAgentDetection()
     }
 
     func destroySurface() {
@@ -234,6 +239,7 @@ final class GhosttyTerminalNSView: NSView {
             ghostty_surface_free(surface)
             detachRendererLayer()
         }
+        stopAgentDetection()
         surface = nil
         surfaceFocused = nil
         cleanupSurfaceConfigPointers()
@@ -259,6 +265,8 @@ final class GhosttyTerminalNSView: NSView {
         onSearchTotal = nil
         onSearchSelected = nil
         onProgressReport = nil
+        onOfflineChange = nil
+        onDetectedAgentChange = nil
         if let observer = screenChangeObserver {
             NotificationCenter.default.removeObserver(observer)
             screenChangeObserver = nil
@@ -277,6 +285,7 @@ final class GhosttyTerminalNSView: NSView {
         screenChangeObserver.flatMap { NotificationCenter.default.removeObserver($0) }
         occlusionObserver.flatMap { NotificationCenter.default.removeObserver($0) }
         delayedResizeWorkItem?.cancel()
+        agentDetectionCoalesced?.cancel()
         if let surface {
             ghostty_surface_free(surface)
         }
@@ -1626,6 +1635,41 @@ final class GhosttyTerminalNSView: NSView {
         guard length > 0 else { return nil }
         let bytes = buffer.prefix(Int(length)).map { UInt8(bitPattern: $0) }
         return String(bytes: bytes, encoding: .utf8)
+    }
+
+    private func startAgentDetection() {
+        if agentExecutables.isEmpty {
+            agentExecutables = DetectedAgentStore.executablesSnapshot(from: AIProviderRegistry.shared)
+        }
+        detectAgentNow()
+    }
+
+    private func stopAgentDetection() {
+        agentDetectionCoalesced?.cancel()
+        agentDetectionCoalesced = nil
+        guard detectedAgentProviderID != nil else { return }
+        detectedAgentProviderID = nil
+        onDetectedAgentChange?(nil)
+    }
+
+    func requestAgentDetection() {
+        guard surface != nil, agentDetectionCoalesced == nil else { return }
+        let work = DispatchWorkItem { [weak self] in
+            self?.agentDetectionCoalesced = nil
+            self?.detectAgentNow()
+        }
+        agentDetectionCoalesced = work
+        DispatchQueue.main.async(execute: work)
+    }
+
+    private func detectAgentNow() {
+        guard let surface else { return }
+        let foregroundPID = ghostty_surface_foreground_pid(surface)
+        let candidateNames = ForegroundProcessInspector.executableNameCandidates(pid: foregroundPID)
+        let providerID = AIAgentDetector.providerID(forCandidateNames: candidateNames, executables: agentExecutables)
+        guard providerID != detectedAgentProviderID else { return }
+        detectedAgentProviderID = providerID
+        onDetectedAgentChange?(providerID)
     }
 
     private func recordSpecialKey(_ event: NSEvent) {

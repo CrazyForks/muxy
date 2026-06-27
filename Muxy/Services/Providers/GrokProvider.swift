@@ -4,7 +4,7 @@ struct GrokProvider: AIProviderIntegration {
     let id = "grok"
     let displayName = "Grok"
     let socketTypeKey = "grok_hook"
-    let iconName = "sparkles"
+    let iconName = "grok"
     let executableNames = ["grok"]
     let hookScriptName = "muxy-grok-hook"
 
@@ -46,6 +46,10 @@ struct GrokProvider: AIProviderIntegration {
             pathEnvironment: pathEnvironment(),
             includeSystemWide: homeDirectory == NSHomeDirectory()
         )
+    }
+
+    func isHookInstalled() -> Bool {
+        ClaudeCodeProvider.fileContainsMuxyMarker(at: hookFilePath)
     }
 
     func install(hookScriptPath: String) throws {

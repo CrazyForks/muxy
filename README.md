@@ -9,7 +9,6 @@
 
 <div align="center">
   <img src="https://img.shields.io/github/downloads/muxy-app/muxy/total" />
-  <img src="https://img.shields.io/github/license/muxy-app/muxy" />
 </div>
 
 ## Vision

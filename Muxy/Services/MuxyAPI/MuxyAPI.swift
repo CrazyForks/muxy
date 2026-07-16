@@ -1050,9 +1050,20 @@ enum MuxyAPI {
 
             let workspaceContext = ActiveWorkspaceContext.shared.current
             let expandedPath = workspaceContext.isRemote ? trimmedPath : NSString(string: trimmedPath).expandingTildeInPath
-            let path = trimmedPath.isEmpty
-                ? WorktreeLocationResolver.worktreeDirectory(for: project, slug: slug(from: trimmedName))
-                : expandedPath
+            let path: String
+            if trimmedPath.isEmpty {
+                do {
+                    path = try WorktreeLocationResolver.worktreeDirectory(
+                        for: project,
+                        slug: WorktreeLocationResolver.slug(from: trimmedName),
+                        branch: trimmedBranch
+                    )
+                } catch {
+                    return .failure(.invalidArguments(error.localizedDescription))
+                }
+            } else {
+                path = expandedPath
+            }
             guard await !workspaceContext.fileOps.exists(at: path) else {
                 return .failure(.worktreePathExists)
             }
@@ -2049,15 +2060,6 @@ extension MuxyAPI {
         }
         return .success(match)
     }
-}
-
-private func slug(from name: String) -> String {
-    let allowed = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "._-"))
-    let scalars = name.unicodeScalars.map { allowed.contains($0) ? Character($0) : "-" }
-    let collapsed = String(scalars)
-        .split(separator: "-", omittingEmptySubsequences: true)
-        .joined(separator: "-")
-    return collapsed.isEmpty ? UUID().uuidString : collapsed
 }
 
 @MainActor

@@ -70,9 +70,19 @@ Define reusable shell command shortcuts in **Settings → Commands**:
 - Triggering one creates a new tab and runs the command.
 - Useful for `npm run dev`, `make watch`, `just test`, …
 
-## Rich Input
+## Composer
 
-`Cmd+I` opens a multiline composer for prompts, files, images, and broadcast sends.
+`Cmd+I` opens the focused composer for multiline prompts, files, images, and broadcast sends. `Cmd+Shift+I`
+opens the legacy voice recorder normally, or starts on-device dictation inside the focused composer when it is
+already open. Stop Composer dictation to insert the transcript at the editor cursor, or press Return while
+recording, then edit or send it normally.
+
+Composer submission controls stay unavailable while dictation is starting or recording. A dictation error does
+not block typed text from being sent, and its inline message can be dismissed without closing the composer.
+Only one focused overlay is shown at a time, so Composer shortcuts do not open it over another modal.
+
+The status-bar microphone remains available as the legacy voice recorder. It inserts the final transcript into
+the control that was focused before recording and can optionally press Return afterward.
 
 ## Right-click menu
 

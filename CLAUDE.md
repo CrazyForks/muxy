@@ -39,8 +39,6 @@ Test processes use isolated Application Support storage.
 - Follow the existing code's pattern but offer refactors if they improve code quality and maintainability.
 - Use logs for debugging.
 - If the feature is testable, then you must write tests.
-- Avoid long PR descriptions. It is for humans and keep it in 3 lines maximum.
-- Upload screenshots or recordings for the PRs.
 - Never answer any question without a proper investigation and exploring the codebase.
 - Prioritize problem comprehension over premature implementation. Validate the approach before execution to avoid rework
 - Plan properly before executing to not double work

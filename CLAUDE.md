@@ -46,6 +46,7 @@ Test processes use isolated Application Support storage.
 - Simpler, flexible and scalable approaches are key factors
 - Never run the app. User will run and test visually
 - Documenting must be done accurate. At each round of tasks also review the related docs and fix/improve if needed.
+- If contributed using AI, the LLM name is mandatory to be mentioned in the PR description.
 
 ## Extensions
 

@@ -22,6 +22,8 @@ struct InterfaceSettingsView: View {
     private var showWorktreeUnreadIndicator = WorktreeListPreferences.defaultShowUnreadIndicator
     @AppStorage(WorktreeListPreferences.orderByMRUKey)
     private var orderWorktreesByMRU = WorktreeListPreferences.defaultOrderByMRU
+    @AppStorage(WorktreeListPreferences.groupWorktreesKey)
+    private var groupWorktrees = WorktreeListPreferences.defaultGroupWorktrees
 
     private var layoutSelection: Binding<AppLayout> {
         Binding(get: { layoutStore.layout }, set: { layoutStore.set($0) })
@@ -152,6 +154,10 @@ struct InterfaceSettingsView: View {
                     .pickerStyle(.segmented)
                     .settingsControl(.intrinsic)
                 }
+            }
+
+            if layoutStore.layout.supportsGroupedWorktrees {
+                SettingsToggleRow(label: "Nest worktrees inside projects", isOn: $groupWorktrees)
             }
         }
 

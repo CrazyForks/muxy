@@ -90,7 +90,7 @@ struct TabFocusedSidebar: View {
             .padding(.top, UIMetrics.spacing2)
 
             ScrollView {
-                LazyVStack(alignment: .leading, spacing: 0) {
+                VStack(alignment: .leading, spacing: 0) {
                     ForEach(rows) { row in
                         TabFocusedProjectRow(
                             project: row.project,

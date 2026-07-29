@@ -409,7 +409,7 @@ struct ProjectFocusedSidebar: View {
     private var scrollableProjects: some View {
         let shortcutIndices = ProjectNavigationOrder.shortcutIndices(in: navigableProjects)
         return ScrollView(.vertical, showsIndicators: false) {
-            LazyVStack(spacing: UIMetrics.spacing3) {
+            VStack(spacing: UIMetrics.spacing3) {
                 if let filteredHomeProject {
                     projectRow(for: filteredHomeProject, shortcutIndex: shortcutIndices[filteredHomeProject.id])
                 }

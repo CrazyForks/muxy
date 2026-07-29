@@ -15,12 +15,12 @@ struct TabFocusedTabActions: View {
     }
 
     var body: some View {
-        SidebarActionButton(symbol: "plus", label: "New Terminal Tab") {
+        SidebarActionButton(symbol: "plus", label: L10n.string("New Terminal Tab")) {
             guard let targetKey = activatedTargetKey() else { return }
             appState.dispatch(.createTabInWorktree(key: targetKey, areaID: nil))
         }
         if browserEnabled {
-            SidebarActionButton(symbol: "globe", label: "New Browser Tab") {
+            SidebarActionButton(symbol: "globe", label: L10n.string("New Browser Tab")) {
                 guard let targetKey = activatedTargetKey() else { return }
                 appState.dispatch(.createBrowserTabInWorktree(
                     key: targetKey,
@@ -93,8 +93,8 @@ struct AgentsFocusedTabActions: View {
             loadingProviders = false
         }
         .onDisappear { providerTask?.cancel() }
-        .help("New Agent Tab")
-        .accessibilityLabel("New Agent Tab")
+        .help(L10n.string("New Agent Tab"))
+        .accessibilityLabel(L10n.string("New Agent Tab"))
     }
 
     private func presentProviders() {
@@ -120,7 +120,7 @@ struct AgentsFocusedTabActions: View {
                 loadingProviders = false
                 showingProviders = false
                 ToastState.shared.show(
-                    title: "Could not check remote agent providers",
+                    title: L10n.string("Could not check remote agent providers"),
                     body: error.localizedDescription
                 )
             }
@@ -474,7 +474,7 @@ struct TabFocusedTabRow: View {
                         }
                     }
             } else {
-                Text(tab.title)
+                Text(tab.localizedTitle)
                     .font(.system(size: UIMetrics.fontHeadline))
                     .foregroundStyle(active ? MuxyTheme.fg : MuxyTheme.fgMuted)
                     .lineLimit(1)
@@ -529,7 +529,7 @@ struct TabFocusedTabRow: View {
                 .accessibilityHidden(true)
         }
         .accessibilityElement(children: .combine)
-        .accessibilityLabel(tab.title)
+        .accessibilityLabel(tab.localizedTitle)
         .accessibilityAddTraits(active ? [.isButton, .isSelected] : .isButton)
         .contextMenu { contextMenu }
         .popover(isPresented: $showColorPicker, arrowEdge: .trailing) {
@@ -548,35 +548,39 @@ struct TabFocusedTabRow: View {
     @ViewBuilder
     private var contextMenu: some View {
         if isTopLevel {
-            Button("New Tab to the Left") {
+            Button(L10n.string("New Tab to the Left")) {
                 appState.dispatch(
                     .createTabAdjacent(projectID: projectID, areaID: area.id, tabID: tab.id, side: .left)
                 )
             }
-            Button("New Tab to the Right") {
+            Button(L10n.string("New Tab to the Right")) {
                 appState.dispatch(
                     .createTabAdjacent(projectID: projectID, areaID: area.id, tabID: tab.id, side: .right)
                 )
             }
             Divider()
         }
-        Button("Rename Tab") { startRename() }
+        Button(L10n.string("Rename Tab")) { startRename() }
         if tab.customTitle != nil {
-            Button("Reset Title") {
+            Button(L10n.string("Reset Title")) {
                 area.setCustomTitle(tab.id, title: nil)
                 appState.saveWorkspaces()
             }
         }
-        Button("Set Tab Color…") { showColorPicker = true }
+        Button(L10n.string("Set Tab Color…")) { showColorPicker = true }
         if tab.colorID != nil {
-            Button("Reset Tab Color") {
+            Button(L10n.string("Reset Tab Color")) {
                 area.setColorID(tab.id, colorID: nil)
                 appState.saveWorkspaces()
             }
         }
         if isTopLevel {
             Divider()
-            Button(tab.isPinned ? "Unpin Tab" : "Pin Tab") {
+            Button(
+                tab.isPinned
+                    ? L10n.string("Unpin Tab")
+                    : L10n.string("Pin Tab")
+            ) {
                 guard let worktree else { return }
                 appState.togglePinTopLevelTab(
                     tab.id,
@@ -587,14 +591,14 @@ struct TabFocusedTabRow: View {
         if !tab.isPinned || isTopLevel && hasClosableSiblings {
             Divider()
             if !tab.isPinned {
-                Button("Close Tab") { close() }
+                Button(L10n.string("Close Tab")) { close() }
             }
             if isTopLevel {
-                Button("Close Other Tabs") { closeOthers() }
+                Button(L10n.string("Close Other Tabs")) { closeOthers() }
                     .disabled(closableOthersCount == 0)
-                Button("Close Tabs to the Left") { closeLeft() }
+                Button(L10n.string("Close Tabs to the Left")) { closeLeft() }
                     .disabled(closableLeftCount == 0)
-                Button("Close Tabs to the Right") { closeRight() }
+                Button(L10n.string("Close Tabs to the Right")) { closeRight() }
                     .disabled(closableRightCount == 0)
             }
         }
@@ -614,7 +618,7 @@ struct TabFocusedTabRow: View {
                 .frame(width: UIMetrics.iconMD, height: UIMetrics.iconMD)
                 .contentShape(Rectangle())
                 .onTapGesture { close() }
-                .accessibilityLabel("Close Tab")
+                .accessibilityLabel(L10n.string("Close Tab"))
                 .accessibilityAddTraits(.isButton)
         } else {
             statusAccessory
@@ -645,7 +649,7 @@ struct TabFocusedTabRow: View {
                 .font(.system(size: UIMetrics.fontFootnote, weight: .medium))
                 .foregroundStyle(MuxyTheme.fgMuted)
                 .frame(width: UIMetrics.iconMD, height: UIMetrics.iconMD)
-                .help("Idle — terminal freed to save memory. Reopens when selected.")
+                .help(L10n.string("Idle — terminal freed to save memory. Reopens when selected."))
         } else {
             Color.clear
                 .frame(width: UIMetrics.iconMD, height: UIMetrics.iconMD)
@@ -761,15 +765,23 @@ struct TabFocusedTabRow: View {
     }
 
     private func startRename() {
-        renameText = tab.title
+        renameText = tab.localizedTitle
         isRenaming = true
         renameFieldFocused = true
     }
 
     private func commitRename() {
-        let trimmed = renameText.trimmingCharacters(in: .whitespaces)
-        area.setCustomTitle(tab.id, title: trimmed.isEmpty ? nil : trimmed)
-        appState.saveWorkspaces()
+        switch TerminalTabRename.resolve(
+            input: renameText,
+            displayedTitle: tab.localizedTitle,
+            existingCustomTitle: tab.customTitle
+        ) {
+        case .unchanged:
+            break
+        case let .update(customTitle):
+            area.setCustomTitle(tab.id, title: customTitle)
+            appState.saveWorkspaces()
+        }
         isRenaming = false
     }
 

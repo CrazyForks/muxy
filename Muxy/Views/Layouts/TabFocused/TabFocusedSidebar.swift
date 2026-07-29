@@ -120,22 +120,22 @@ struct TabFocusedSidebar: View {
 
     private var sortMenu: some View {
         Menu {
-            Picker("Sort Projects By", selection: $sortModeRaw) {
+            Picker(L10n.string("Sort Projects By"), selection: $sortModeRaw) {
                 ForEach(ProjectSortMode.allCases) { mode in
-                    Label(mode.title, systemImage: mode.systemImage).tag(mode.rawValue)
+                    Label(L10n.string(key: mode.title), systemImage: mode.systemImage).tag(mode.rawValue)
                 }
             }
             .pickerStyle(.inline)
         } label: {
             SidebarHeaderIconButtonLabel(
                 systemName: "arrow.up.arrow.down",
-                accessibilityLabel: "Sort Projects"
+                accessibilityLabel: L10n.string("Sort Projects")
             )
         }
         .menuStyle(.button)
         .menuIndicator(.hidden)
         .buttonStyle(.plain)
-        .help("Sort Projects: \(sortMode.title)")
+        .help(L10n.string("Sort Projects: \(L10n.string(key: sortMode.title))"))
     }
 
     private func openProjectPicker() {
@@ -162,7 +162,7 @@ struct TabFocusedSidebar: View {
                 projectGroupStore: projectGroupStore
             )
         } catch {
-            ToastState.shared.show(title: "Could not restore project", body: error.localizedDescription)
+            ToastState.shared.show(title: L10n.string("Could not restore project"), body: error.localizedDescription)
         }
     }
 }
@@ -248,14 +248,14 @@ private struct TabFocusedAddProjectRow: View {
                 label
             }
             .buttonStyle(.plain)
-            .accessibilityLabel("Add Project")
+            .accessibilityLabel(L10n.string("Add Project"))
         } else {
             Menu {
                 Button(action: openProject) {
-                    Label("Choose Folder…", systemImage: "folder")
+                    Label(L10n.string("Choose Folder…"), systemImage: "folder")
                 }
                 Divider()
-                Section("Recently Removed") {
+                Section(L10n.string("Recently Removed")) {
                     ForEach(recentlyRemovedProjects) { entry in
                         Button {
                             restoreProject(entry.id)
@@ -270,7 +270,7 @@ private struct TabFocusedAddProjectRow: View {
             .menuStyle(.button)
             .menuIndicator(.hidden)
             .buttonStyle(.plain)
-            .accessibilityLabel("Add Project")
+            .accessibilityLabel(L10n.string("Add Project"))
         }
     }
 
@@ -283,7 +283,7 @@ private struct TabFocusedAddProjectRow: View {
                     width: TabFocusedSidebarMetrics.folderIconSize,
                     height: TabFocusedSidebarMetrics.folderIconSize
                 )
-            Text("Add Project")
+            Text(L10n.resource("Add Project"))
                 .font(.system(size: UIMetrics.fontHeadline, weight: .medium))
                 .foregroundStyle(hovered ? MuxyTheme.accent : MuxyTheme.fgMuted)
             Spacer(minLength: 0)

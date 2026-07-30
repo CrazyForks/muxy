@@ -161,6 +161,54 @@ Result shapes: [`vcsStatus`](#vcsstatus-shape) and [`vcsBranches`](#vcsbranches-
 
 `kind` is `hunk`, `context`, `addition`, `deletion`, or `collapsed`. Binary files return `isBinary: true` with no rows.
 
+## Files
+
+| Method | Parameters | Result |
+| --- | --- | --- |
+| `filesList` | `projectID`, `path` | `files` |
+| `filesRead` | `projectID`, `path`, `encoding` | `fileContent` |
+| `filesStat` | `projectID`, `path` | `fileStat` |
+| `filesWrite` | `projectID`, `path`, `contents`, `encoding` | `filePaths` |
+| `filesMkdir` | `projectID`, `path` | `filePaths` |
+| `filesRename` | `projectID`, `path`, `newName` | `filePaths` |
+| `filesMove` | `projectID`, `paths`, `into` | `filePaths` |
+| `filesDelete` | `projectID`, `paths` | `ok` |
+
+Every `path` is **relative to the project's active worktree root** — the same root `getWorkspace` describes. Select the worktree first with `selectWorktree`; the file methods always operate on the active one. Pass `""` or `"."` to list or stat the root, or to use it as a `filesMove` destination. The root itself cannot be written, created, renamed, moved, or deleted. This is the same file surface Muxy exposes to [extensions](../extensions/files.md), reachable over the socket.
+
+Paths are sandboxed to that root. Any path that resolves outside it — via `..` or a symlink pointing out — is rejected with `403` and never touches disk.
+
+`encoding` is required on `filesRead` and `filesWrite`:
+
+- `utf8` — `content` / `contents` is the file's text. Reading non-UTF-8 bytes fails with `500`.
+- `base64` — `content` / `contents` is Base64. Use this for images and any other binary file. Invalid Base64 on write is rejected before the file is opened.
+
+Either way the 5 MiB cap applies to the **raw** bytes, so a Base64 read of a file at the limit produces roughly a 6.7 MiB string.
+
+`filesWrite`, `filesMkdir`, and `filesRename` return `filePaths` holding a single path; `filesMove` returns one path per moved entry, in the order given.
+
+Notes:
+
+- `filesWrite` does not create parent directories — call `filesMkdir` first.
+- `filesMkdir` never overwrites, and the returned path is the one actually created — which may not be the one requested. For a **local** project an existing name yields a uniquified sibling (`notes` → `notes 2`); over **SSH** it is `mkdir -p`, so an existing directory is left alone and its own path comes back. Always use the returned path rather than assuming the request succeeded verbatim.
+- `filesRename` rejects an existing destination. `filesMove` preserves it and uniquifies the moved entry (`report.txt` → `report 2.txt`) for both local and SSH projects.
+- `filesRename` and `filesMove` keep any open editor tabs on the Mac pointed at the moved files.
+- `filesDelete` moves entries to the macOS Trash for local projects. For an **SSH** project it is a remote `rm -rf` and is **not** recoverable.
+- Listings exclude `.git` and sort directories before files, case-insensitively. `isIgnored` reflects `.gitignore` for local projects and is always `false` over SSH.
+- These methods work for SSH-workspace projects too: the Mac brokers the operation over the existing SSH connection, so paths, sandbox, and results are the remote host's.
+
+Unlike the extension API, a remote file write does **not** prompt for consent on the Mac. A paired, authenticated device is already trusted to mutate the workspace — the same trust `vcsCommit` and `vcsDiscardFiles` rely on. Revoke the device in **Settings -> Mobile** to withdraw it.
+
+| Code | Meaning |
+| --- | --- |
+| `403` | The path escaped the worktree root. |
+| `404` | Unknown `projectID`. |
+| `500` | Read limit exceeded, non-UTF-8 read, invalid Base64, missing file, or any other filesystem error. The `message` carries the underlying text. |
+
+Result shapes: [`files`](data-objects.md#file-entry), [`fileContent`](data-objects.md#file-content), [`fileStat`](data-objects.md#file-stat). `filePaths` is a plain array of relative path strings.
+
+To keep a view in sync after a mutation, listen for [`fileChanged`](events.md) rather than polling `filesList`.
+
 ## Example: full authentication request
 
 ```json

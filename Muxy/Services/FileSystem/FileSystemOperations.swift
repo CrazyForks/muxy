@@ -6,6 +6,7 @@ enum FileSystemOperationError: Error, Equatable {
     case sourceMissing(String)
     case invalidName
     case sameAsSource
+    case outsideRoot(String)
     case underlying(String)
 
     var userMessage: String {
@@ -18,6 +19,10 @@ enum FileSystemOperationError: Error, Equatable {
             "That name is not allowed"
         case .sameAsSource:
             "Can’t move a folder into itself"
+        case let .outsideRoot(path):
+            path.isEmpty
+                ? "path escapes the workspace root"
+                : "path '\(path)' escapes the workspace root"
         case let .underlying(message):
             message
         }
@@ -34,6 +39,14 @@ enum FileSystemOperations {
     nonisolated static func writeFileSync(contents: String, atAbsolutePath absolutePath: String) throws {
         do {
             try contents.write(toFile: absolutePath, atomically: true, encoding: .utf8)
+        } catch {
+            throw FileSystemOperationError.underlying(error.localizedDescription)
+        }
+    }
+
+    nonisolated static func writeFileSync(data: Data, atAbsolutePath absolutePath: String) throws {
+        do {
+            try data.write(to: URL(fileURLWithPath: absolutePath), options: .atomic)
         } catch {
             throw FileSystemOperationError.underlying(error.localizedDescription)
         }
@@ -95,6 +108,9 @@ enum FileSystemOperations {
         let name = try sanitize(rawName)
         let parent = (absolutePath as NSString).deletingLastPathComponent
         let currentName = (absolutePath as NSString).lastPathComponent
+        guard FileManager.default.fileExists(atPath: absolutePath) else {
+            throw FileSystemOperationError.sourceMissing(absolutePath)
+        }
         if name == currentName {
             return absolutePath
         }
@@ -141,7 +157,7 @@ enum FileSystemOperations {
         return results
     }
 
-    nonisolated private static func sanitize(_ rawName: String) throws -> String {
+    nonisolated static func sanitize(_ rawName: String) throws -> String {
         let trimmed = rawName.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty, !trimmed.contains("/"), trimmed != ".", trimmed != ".." else {
             throw FileSystemOperationError.invalidName

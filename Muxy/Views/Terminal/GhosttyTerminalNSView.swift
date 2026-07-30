@@ -57,6 +57,8 @@ final class GhosttyTerminalNSView: NSView,
     private var hasMaterializedOnce = false
     private var isOfflinedState = false
     private var offlineInvisibleAt: Date?
+    private let shellActivityTracker = TerminalShellActivityTracker()
+    private var streamedPaneID: UUID?
 
     var isTakenOffline: Bool { isOfflinedState }
     var offlineInvisibleSince: Date? { offlineInvisibleAt }
@@ -254,6 +256,7 @@ final class GhosttyTerminalNSView: NSView,
 
         if let paneID = TerminalViewRegistry.shared.paneID(for: self) {
             RemoteTerminalStreamer.shared.attach(paneID: paneID, surface: self)
+            streamedPaneID = paneID
         }
 
         applyOcclusionState()
@@ -265,8 +268,9 @@ final class GhosttyTerminalNSView: NSView,
         let cancelledWorker = terminalInputQueue.cancelAll()
         scheduleRemoteImageCleanup(after: cancelledWorker)
         if let surface {
-            if let paneID = TerminalViewRegistry.shared.paneID(for: self) {
+            if let paneID = streamedPaneID {
                 RemoteTerminalStreamer.shared.detach(paneID: paneID, surface: self)
+                streamedPaneID = nil
             }
             ghostty_surface_free(surface)
             detachRendererLayer()
@@ -514,7 +518,15 @@ final class GhosttyTerminalNSView: NSView,
         if ghostty_surface_needs_confirm_quit(surface) {
             return false
         }
-        return !isAlternateScreenActive(surface: surface)
+        let foregroundPID = ghostty_surface_foreground_pid(surface)
+        return TerminalOfflinePolicy.isIdle(
+            hasRunningProcess: TerminalOfflinePolicy.hasRunningProcess(
+                foregroundProcessName: Self.processName(pid: foregroundPID),
+                foregroundProcessArguments: ProcessArgumentsInspector.invocation(pid: foregroundPID)?.arguments,
+                isShellCommandRunning: shellActivityTracker.isCommandRunning
+            ),
+            isAlternateScreen: isAlternateScreenActive(surface: surface)
+        )
     }
 
     var isOfflineBlockedByRemote: Bool {
@@ -1691,10 +1703,12 @@ final class GhosttyTerminalNSView: NSView,
         }
         if let rawOutputToken {
             GhosttyRawOutputHandlers.shared.remove(rawOutputToken)
+            GhosttyShellActivitySessions.shared.remove(rawOutputToken)?.invalidate()
             self.rawOutputToken = nil
         }
         guard let surface, let handler else { return }
         let token = GhosttyRawOutputHandlers.shared.insert(handler)
+        GhosttyShellActivitySessions.shared.insert(shellActivityTracker.beginSession(), token: token)
         rawOutputToken = token
         ghostty_surface_set_data_callback(
             surface,
@@ -2253,6 +2267,31 @@ private final class GhosttyRawOutputHandlers {
     }
 }
 
+private final class GhosttyShellActivitySessions: @unchecked Sendable {
+    static let shared = GhosttyShellActivitySessions()
+
+    private let lock = NSLock()
+    private var sessions: [Int: TerminalShellActivityTracker.Session] = [:]
+
+    private init() {}
+
+    func insert(_ session: TerminalShellActivityTracker.Session, token: Int) {
+        lock.withLock {
+            sessions[token] = session
+        }
+    }
+
+    func session(token: Int) -> TerminalShellActivityTracker.Session? {
+        lock.withLock { sessions[token] }
+    }
+
+    func remove(_ token: Int) -> TerminalShellActivityTracker.Session? {
+        lock.withLock {
+            sessions.removeValue(forKey: token)
+        }
+    }
+}
+
 private let ghosttyRawOutputCallback: @convention(c) (
     UnsafeMutableRawPointer?,
     UnsafePointer<UInt8>?,
@@ -2261,6 +2300,7 @@ private let ghosttyRawOutputCallback: @convention(c) (
     guard let userdata, let pointer, length > 0 else { return }
     let token = Int(bitPattern: userdata)
     let data = Data(bytes: pointer, count: Int(length))
+    GhosttyShellActivitySessions.shared.session(token: token)?.recordOutput(data)
     DispatchQueue.main.async {
         MainActor.assumeIsolated {
             GhosttyRawOutputHandlers.shared.deliver(data, token: token)

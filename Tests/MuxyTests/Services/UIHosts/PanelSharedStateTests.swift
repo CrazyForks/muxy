@@ -241,11 +241,242 @@ struct PanelSharedStateTests {
             #expect(PanelHost.shared.isOpen(replacementState.hostPanelID))
         }
 
+        @Test("project activation restores each project's open panels")
+        func projectActivationRestoresPanels() {
+            let registry = ExtensionPanelRegistry.shared
+            let projectA = UUID()
+            let projectB = UUID()
+            let filesExtension = "files-\(UUID().uuidString)"
+            let gitExtension = "git-\(UUID().uuidString)"
+            defer {
+                registry.closeAll(extensionID: filesExtension)
+                registry.closeAll(extensionID: gitExtension)
+                registry.activateProject(nil, from: registry.activeProjectID)
+            }
+
+            registry.activateProject(projectA, from: nil)
+            registry.open(
+                extensionID: filesExtension,
+                panel: panel(id: "browser", mode: .pinned),
+                data: .object(["path": .string("/a")])
+            )
+            registry.move(.bottom, forHostPanelID: ExtensionPanelState.hostPanelID(
+                extensionID: filesExtension,
+                panelID: "browser"
+            ))
+
+            registry.activateProject(projectB, from: projectA)
+            #expect(registry.openStates.isEmpty)
+            #expect(!PanelHost.shared.isOpen(ExtensionPanelState.hostPanelID(
+                extensionID: filesExtension,
+                panelID: "browser"
+            )))
+
+            registry.open(
+                extensionID: gitExtension,
+                panel: panel(id: "changes", position: .right, mode: .floating),
+                data: nil
+            )
+            #expect(PanelHost.shared.placement(for: ExtensionPanelState.hostPanelID(
+                extensionID: gitExtension,
+                panelID: "changes"
+            ))?.mode == .floating)
+
+            registry.activateProject(projectA, from: projectB)
+            let filesHost = ExtensionPanelState.hostPanelID(
+                extensionID: filesExtension,
+                panelID: "browser"
+            )
+            #expect(registry.state(forHostPanelID: filesHost) != nil)
+            #expect(PanelHost.shared.placement(for: filesHost)?.position == .bottom)
+            #expect(PanelHost.shared.placement(for: filesHost)?.mode == .pinned)
+            #expect(registry.state(forHostPanelID: filesHost)?.initialData == .object(["path": .string("/a")]))
+            #expect(!PanelHost.shared.isOpen(ExtensionPanelState.hostPanelID(
+                extensionID: gitExtension,
+                panelID: "changes"
+            )))
+
+            registry.activateProject(projectB, from: projectA)
+            #expect(PanelHost.shared.isOpen(ExtensionPanelState.hostPanelID(
+                extensionID: gitExtension,
+                panelID: "changes"
+            )))
+            #expect(!PanelHost.shared.isOpen(filesHost))
+        }
+
+        @Test("project activation leaves the builtin console open")
+        func projectActivationPreservesBuiltinConsole() {
+            let registry = ExtensionPanelRegistry.shared
+            let projectA = UUID()
+            let projectB = UUID()
+            let extensionID = "console-coexist-\(UUID().uuidString)"
+            PanelHost.shared.open(BuiltinPanel.extensionConsole, at: .bottom, mode: .floating)
+            defer {
+                PanelHost.shared.close(BuiltinPanel.extensionConsole)
+                registry.closeAll(extensionID: extensionID)
+                registry.activateProject(nil, from: registry.activeProjectID)
+            }
+
+            registry.activateProject(projectA, from: nil)
+            registry.open(extensionID: extensionID, panel: panel(id: "side"), data: nil)
+            registry.activateProject(projectB, from: projectA)
+
+            #expect(PanelHost.shared.isOpen(BuiltinPanel.extensionConsole))
+            #expect(registry.openStates.isEmpty)
+        }
+
+        @Test("project restore skips snapshots that would displace the builtin console")
+        func projectRestoreSkipsConsoleSlotConflict() {
+            let registry = ExtensionPanelRegistry.shared
+            let projectA = UUID()
+            let projectB = UUID()
+            let extensionID = "console-slot-\(UUID().uuidString)"
+            defer {
+                PanelHost.shared.close(BuiltinPanel.extensionConsole)
+                registry.closeAll(extensionID: extensionID)
+                registry.activateProject(nil, from: registry.activeProjectID)
+            }
+
+            registry.activateProject(projectA, from: nil)
+            registry.open(
+                extensionID: extensionID,
+                panel: panel(id: "bottom", position: .bottom, mode: .floating),
+                data: nil
+            )
+            let hostPanelID = ExtensionPanelState.hostPanelID(
+                extensionID: extensionID,
+                panelID: "bottom"
+            )
+            #expect(PanelHost.shared.isOpen(hostPanelID))
+
+            registry.activateProject(projectB, from: projectA)
+            PanelHost.shared.open(BuiltinPanel.extensionConsole, at: .bottom, mode: .floating)
+            registry.activateProject(projectA, from: projectB)
+
+            #expect(PanelHost.shared.isOpen(BuiltinPanel.extensionConsole))
+            #expect(!PanelHost.shared.isOpen(hostPanelID))
+            #expect(registry.openStates.isEmpty)
+        }
+
+        @Test("a snapshot blocked by the console is restored once the console closes")
+        func projectRestoreRetainsConsoleBlockedSnapshot() {
+            let registry = ExtensionPanelRegistry.shared
+            let projectA = UUID()
+            let projectB = UUID()
+            let extensionID = "console-deferred-\(UUID().uuidString)"
+            defer {
+                PanelHost.shared.close(BuiltinPanel.extensionConsole)
+                registry.closeAll(extensionID: extensionID)
+                registry.activateProject(nil, from: registry.activeProjectID)
+            }
+
+            registry.activateProject(projectA, from: nil)
+            registry.open(
+                extensionID: extensionID,
+                panel: panel(id: "bottom", position: .bottom, mode: .floating),
+                data: nil
+            )
+            let hostPanelID = ExtensionPanelState.hostPanelID(
+                extensionID: extensionID,
+                panelID: "bottom"
+            )
+
+            registry.activateProject(projectB, from: projectA)
+            PanelHost.shared.open(BuiltinPanel.extensionConsole, at: .bottom, mode: .floating)
+            registry.activateProject(projectA, from: projectB)
+            #expect(!PanelHost.shared.isOpen(hostPanelID))
+
+            registry.activateProject(projectB, from: projectA)
+            PanelHost.shared.close(BuiltinPanel.extensionConsole)
+            registry.activateProject(projectA, from: projectB)
+
+            #expect(PanelHost.shared.isOpen(hostPanelID))
+            #expect(PanelHost.shared.placement(for: hostPanelID)?.position == .bottom)
+            #expect(PanelHost.shared.placement(for: hostPanelID)?.mode == .floating)
+        }
+
+        @Test("captureLiveSnapshots preserves panel entry and chrome fields")
+        func captureLiveSnapshotsPreservesPanelDefinition() {
+            let registry = ExtensionPanelRegistry.shared
+            let extensionID = "snapshot-chrome-\(UUID().uuidString)"
+            let defined = ExtensionPanel(
+                id: "review",
+                title: "Review",
+                icon: .symbol("checklist"),
+                entry: "panels/review.html",
+                position: .right,
+                mode: .floating,
+                hiddenControls: [.pin],
+                hideTopbar: false,
+                defaultData: .object(["mode": .string("diff")])
+            )
+            defer {
+                registry.closeAll(extensionID: extensionID)
+                registry.activateProject(nil, from: registry.activeProjectID)
+            }
+
+            registry.activateProject(UUID(), from: nil)
+            registry.open(extensionID: extensionID, panel: defined, data: .object(["mode": .string("diff")]))
+            let snapshots = registry.captureLiveSnapshots()
+            let snapshot = snapshots.first { $0.extensionID == extensionID && $0.panelID == "review" }
+
+            #expect(snapshot?.entry == "panels/review.html")
+            #expect(snapshot?.title == "Review")
+            #expect(snapshot?.icon == .symbol("checklist"))
+            #expect(snapshot?.hiddenControls == [.pin])
+            #expect(snapshot?.initialData == .object(["mode": .string("diff")]))
+        }
+
+        @Test("closeAll purges inactive project snapshots for that extension")
+        func closeAllPurgesInactiveSnapshots() {
+            let registry = ExtensionPanelRegistry.shared
+            let projectA = UUID()
+            let projectB = UUID()
+            let extensionID = "purge-\(UUID().uuidString)"
+            defer {
+                registry.closeAll(extensionID: extensionID)
+                registry.activateProject(nil, from: registry.activeProjectID)
+            }
+
+            registry.activateProject(projectA, from: nil)
+            registry.open(extensionID: extensionID, panel: panel(id: "files"), data: nil)
+            registry.activateProject(projectB, from: projectA)
+            registry.closeAll(extensionID: extensionID)
+            registry.activateProject(projectA, from: projectB)
+
+            #expect(registry.openStates.isEmpty)
+            #expect(!PanelHost.shared.isOpen(ExtensionPanelState.hostPanelID(
+                extensionID: extensionID,
+                panelID: "files"
+            )))
+        }
+
+        @Test("purgeProject drops snapshots and live panels for that project")
+        func purgeProjectDropsState() {
+            let registry = ExtensionPanelRegistry.shared
+            let projectA = UUID()
+            let projectB = UUID()
+            let extensionID = "purge-project-\(UUID().uuidString)"
+            defer {
+                registry.closeAll(extensionID: extensionID)
+                registry.activateProject(nil, from: registry.activeProjectID)
+            }
+
+            registry.activateProject(projectA, from: nil)
+            registry.open(extensionID: extensionID, panel: panel(id: "files"), data: nil)
+            registry.activateProject(projectB, from: projectA)
+            registry.purgeProject(projectA)
+            registry.activateProject(projectA, from: projectB)
+
+            #expect(registry.openStates.isEmpty)
+        }
+
         private func panel(
             id: String,
-            position: PanelPosition = .right
+            position: PanelPosition = .right,
+            mode: PanelMode = .pinned
         ) -> ExtensionPanel {
-            ExtensionPanel(id: id, entry: "index.html", position: position, mode: .pinned)
+            ExtensionPanel(id: id, entry: "index.html", position: position, mode: mode)
         }
 
         private func waitFor(timeout: TimeInterval, condition: () -> Bool) async -> Bool {
@@ -397,6 +628,25 @@ struct PanelSharedStateTests {
             restoration.restoreAfterClosing(panelID: "third")
 
             #expect(window.firstResponder === previousResponder)
+        }
+
+        @Test("discard does not restore the previous responder")
+        func discardDoesNotRestoreFocus() {
+            let restoration = PanelFocusRestoration()
+            let window = focusTestWindow()
+            let previousResponder = FocusTestView()
+            let panelView = FocusTestView()
+            window.contentView?.addSubview(previousResponder)
+            window.contentView?.addSubview(panelView)
+            #expect(window.makeFirstResponder(previousResponder))
+
+            restoration.captureBeforeClaim(panelID: "files", panelView: panelView)
+            #expect(window.makeFirstResponder(panelView))
+
+            restoration.discard(panelID: "files")
+
+            #expect(window.firstResponder === panelView)
+            #expect(window.firstResponder !== previousResponder)
         }
     }
 

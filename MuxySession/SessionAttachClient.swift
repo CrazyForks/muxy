@@ -2,9 +2,19 @@ import Darwin
 import MachO
 import MuxySessionProtocol
 
+enum SessionAttachExitCode {
+    static let transportFailure: Int32 = 90
+    static let protocolFailure: Int32 = 91
+    static let daemonUnavailable: Int32 = 92
+    static let startupFailure: Int32 = 93
+}
+
 enum SessionAttachClient {
-    static let connectAttempts = 150
+    static let connectCycles = 3
+    static let connectAttemptsPerCycle = 50
     static let connectRetryMicroseconds: useconds_t = 20000
+    static let handshakeAttempts = 3
+    static let handshakeRetryMicroseconds: useconds_t = 100_000
     static let inputBacklogLimit = 4 * 1024 * 1024
 
     struct Configuration {
@@ -17,18 +27,29 @@ enum SessionAttachClient {
         let metadata: [SessionEnvironmentEntry]
     }
 
+    private enum Outcome {
+        case finished(Int32)
+        case retry
+        case failed(Int32)
+    }
+
+    private enum ConnectionOutcome {
+        case connected(Int32)
+        case retry
+        case failed(Int32)
+    }
+
+    private enum DaemonLaunchOutcome {
+        case started
+        case retryableFailure
+        case fatalFailure
+    }
+
     static func run(configuration: Configuration) -> Int32 {
         signal(SIGPIPE, SIG_IGN)
 
-        guard let socket = connect(socketPath: configuration.socketPath) else {
-            SessionLog.write("muxy-session: could not reach the session daemon")
-            return 1
-        }
-        SessionIO.setNonBlocking(socket)
-
         guard let signalPipe = SessionSignalPipe(signals: [SIGWINCH]) else {
-            SessionIO.close(socket)
-            return 1
+            return SessionAttachExitCode.startupFailure
         }
 
         let originalTerminal = enterRawMode()
@@ -38,15 +59,44 @@ enum SessionAttachClient {
             }
         }
 
+        for attempt in 0 ..< handshakeAttempts {
+            switch attach(configuration: configuration, signalPipe: signalPipe) {
+            case let .finished(status),
+                 let .failed(status):
+                return status
+            case .retry:
+                if attempt + 1 < handshakeAttempts {
+                    usleep(handshakeRetryMicroseconds)
+                }
+            }
+        }
+
+        report("could not reach the session daemon")
+        return SessionAttachExitCode.daemonUnavailable
+    }
+
+    private static func attach(configuration: Configuration, signalPipe: SessionSignalPipe) -> Outcome {
+        let socket: Int32
+        switch connect(socketPath: configuration.socketPath) {
+        case let .connected(descriptor):
+            socket = descriptor
+        case .retry:
+            return .retry
+        case let .failed(status):
+            return .failed(status)
+        }
+        defer { SessionIO.close(socket) }
+        SessionIO.setNonBlocking(socket)
+
         let connection = SessionConnection(descriptor: socket)
         connection.enqueue(SessionFrame(kind: .attach, payload: makeRequest(configuration).encoded()))
-
         return loop(connection: connection, signalPipe: signalPipe)
     }
 
-    private static func loop(connection: SessionConnection, signalPipe: SessionSignalPipe) -> Int32 {
+    private static func loop(connection: SessionConnection, signalPipe: SessionSignalPipe) -> Outcome {
+        var isAttached = false
         while true {
-            guard connection.flush() else { return 1 }
+            guard connection.flush() else { return transportOutcome(isAttached: isAttached) }
 
             var descriptors = [
                 pollfd(fd: signalPipe.readDescriptor, events: Int16(POLLIN), revents: 0),
@@ -56,13 +106,13 @@ enum SessionAttachClient {
                     revents: 0
                 ),
             ]
-            if connection.pendingByteCount < inputBacklogLimit {
+            if isAttached, connection.pendingByteCount < inputBacklogLimit {
                 descriptors.append(pollfd(fd: STDIN_FILENO, events: Int16(POLLIN), revents: 0))
             }
 
             let ready = poll(&descriptors, nfds_t(descriptors.count), -1)
             if ready < 0 {
-                guard errno == EINTR else { return 1 }
+                guard errno == EINTR else { return transportOutcome(isAttached: isAttached) }
                 continue
             }
 
@@ -71,13 +121,17 @@ enum SessionAttachClient {
                     signalPipe.drain()
                     sendResize(connection)
                 } else if entry.fd == STDIN_FILENO {
-                    guard forwardInput(connection) else { return 0 }
-                } else if let status = receive(connection, revents: entry.revents) {
+                    guard forwardInput(connection) else { return .finished(0) }
+                } else if let outcome = receive(connection, revents: entry.revents, isAttached: &isAttached) {
                     _ = connection.flush()
-                    return status
+                    return outcome
                 }
             }
         }
+    }
+
+    private static func transportOutcome(isAttached: Bool) -> Outcome {
+        isAttached ? .failed(SessionAttachExitCode.transportFailure) : .retry
     }
 
     private static func forwardInput(_ connection: SessionConnection) -> Bool {
@@ -93,9 +147,13 @@ enum SessionAttachClient {
         }
     }
 
-    private static func receive(_ connection: SessionConnection, revents: Int16) -> Int32? {
+    private static func receive(
+        _ connection: SessionConnection,
+        revents: Int16,
+        isAttached: inout Bool
+    ) -> Outcome? {
         if revents & Int16(POLLOUT) != 0, !connection.flush() {
-            return 1
+            return transportOutcome(isAttached: isAttached)
         }
         guard revents & Int16(POLLIN) != 0 || revents & Int16(POLLHUP) != 0 else { return nil }
 
@@ -118,20 +176,22 @@ enum SessionAttachClient {
             do {
                 frame = try connection.decoder.next()
             } catch {
-                return 1
+                return .failed(SessionAttachExitCode.protocolFailure)
             }
             guard let frame else { break }
             switch frame.kind {
+            case .attached:
+                isAttached = true
             case .output:
-                guard SessionIO.writeAll(STDOUT_FILENO, frame.payload) else { return 1 }
+                guard SessionIO.writeAll(STDOUT_FILENO, frame.payload) else {
+                    return transportOutcome(isAttached: isAttached)
+                }
             case .exited:
-                return (try? SessionExitPayload.decode(frame.payload)) ?? 0
+                return .finished((try? SessionExitPayload.decode(frame.payload)) ?? 0)
             case .failure:
-                let message = (try? SessionTextPayload.decode(frame.payload)) ?? "session failed"
-                SessionLog.write("muxy-session: " + message)
-                return 1
-            case .attached,
-                 .attach,
+                report((try? SessionTextPayload.decode(frame.payload)) ?? "session failed")
+                return .failed(SessionAttachExitCode.protocolFailure)
+            case .attach,
                  .input,
                  .resize,
                  .list,
@@ -144,7 +204,11 @@ enum SessionAttachClient {
             }
         }
 
-        return reachedEnd ? 1 : nil
+        return reachedEnd ? transportOutcome(isAttached: isAttached) : nil
+    }
+
+    private static func report(_ message: String) {
+        SessionIO.writeAll(STDERR_FILENO, Array(("muxy-session: " + message + "\r\n").utf8))
     }
 
     private static func sendResize(_ connection: SessionConnection) {
@@ -182,24 +246,32 @@ enum SessionAttachClient {
         return original
     }
 
-    private static func connect(socketPath: String) -> Int32? {
-        if let descriptor = SessionSocket.connect(path: socketPath) {
-            return descriptor
-        }
-        launchDaemon(socketPath: socketPath)
-        for _ in 0 ..< connectAttempts {
-            usleep(connectRetryMicroseconds)
+    private static func connect(socketPath: String) -> ConnectionOutcome {
+        for _ in 0 ..< connectCycles {
             if let descriptor = SessionSocket.connect(path: socketPath) {
-                return descriptor
+                return .connected(descriptor)
+            }
+            switch launchDaemon(socketPath: socketPath) {
+            case .started,
+                 .retryableFailure:
+                break
+            case .fatalFailure:
+                return .failed(SessionAttachExitCode.startupFailure)
+            }
+            for _ in 0 ..< connectAttemptsPerCycle {
+                usleep(connectRetryMicroseconds)
+                if let descriptor = SessionSocket.connect(path: socketPath) {
+                    return .connected(descriptor)
+                }
             }
         }
-        return nil
+        return .retry
     }
 
-    private static func launchDaemon(socketPath: String) {
+    private static func launchDaemon(socketPath: String) -> DaemonLaunchOutcome {
         guard let binaryPath = executablePath() else {
-            SessionLog.write("muxy-session: unable to locate the session daemon binary")
-            return
+            report("unable to locate the session daemon binary")
+            return .fatalFailure
         }
         let arguments = SessionCStringArray([binaryPath, "daemon", "--socket", socketPath])
 
@@ -212,7 +284,7 @@ enum SessionAttachClient {
             &fileActions,
             STDERR_FILENO,
             socketPath + ".log",
-            O_WRONLY | O_CREAT | O_TRUNC,
+            O_WRONLY | O_CREAT | O_APPEND,
             0o600
         )
 
@@ -223,8 +295,9 @@ enum SessionAttachClient {
 
         var processID: pid_t = 0
         let result = posix_spawn(&processID, binaryPath, &fileActions, &attributes, arguments.pointer, environ)
-        guard result != 0 else { return }
-        SessionLog.write("muxy-session: could not start the session daemon (\(result))")
+        guard result != 0 else { return .started }
+        report("could not start the session daemon (\(result))")
+        return result == EAGAIN || result == EINTR ? .retryableFailure : .fatalFailure
     }
 
     static func executablePath() -> String? {

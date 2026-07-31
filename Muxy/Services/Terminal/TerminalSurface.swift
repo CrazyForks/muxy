@@ -88,6 +88,12 @@ protocol TerminalImagePasteSurface: AnyObject {
 }
 
 @MainActor
+protocol TerminalBackgroundingSurface: AnyObject {
+    var canSendToBackground: (() -> Bool)? { get set }
+    var onSendToBackground: (() -> Void)? { get set }
+}
+
+@MainActor
 protocol TerminalInputSubmissionTarget: AnyObject {
     func sendRemoteBytes(_ bytes: Data)
     func submitRichInput(text: String)

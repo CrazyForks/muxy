@@ -385,6 +385,15 @@ struct TerminalBridge: NSViewRepresentable {
         surface.onFocus = onFocus
         surface.onProcessExit = onProcessExit
         surface.onSplitRequest = onSplitRequest
+        if let backgroundingSurface = surface as? any TerminalBackgroundingSurface {
+            let paneID = state.id
+            backgroundingSurface.canSendToBackground = { [weak appState] in
+                appState?.canSendTabToBackground(paneID: paneID) ?? false
+            }
+            backgroundingSurface.onSendToBackground = { [weak appState] in
+                appState?.sendTabToBackground(paneID: paneID)
+            }
+        }
         surface.onExternalDragHoverChange = makeExternalDragHoverHandler(areaID: areaID)
         surface.onTitleChange = { [weak state] title in
             DispatchQueue.main.async {

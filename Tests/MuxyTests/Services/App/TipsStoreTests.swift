@@ -45,6 +45,52 @@ struct TipsStoreTests {
         #expect(try TipCatalog.decode(data).count == objects.count)
     }
 
+    @Test("bundled descriptions exist in the English localization template")
+    func bundledDescriptionsAreLocalizable() throws {
+        let root = RepositoryRoot.find()
+        let tips = try TipCatalog.decode(Data(contentsOf: root.appendingPathComponent("Muxy/Resources/tips.json")))
+        let localizationURL = root.appendingPathComponent(
+            "Muxy/Resources/Localization/en.lproj/Localizable.strings"
+        )
+        let localizationData = try Data(contentsOf: localizationURL)
+        let localization = try #require(
+            PropertyListSerialization.propertyList(from: localizationData, format: nil) as? [String: String]
+        )
+        let missingDescriptions = tips.map(\.description).filter { localization[$0] == nil }
+
+        #expect(missingDescriptions.isEmpty, "Missing tip localization keys: \(missingDescriptions)")
+    }
+
+    @Test("bundled documentation links map to local documentation")
+    func bundledDocumentationLinksResolveLocally() throws {
+        let root = RepositoryRoot.find()
+        let tips = try TipCatalog.decode(Data(contentsOf: root.appendingPathComponent("Muxy/Resources/tips.json")))
+        let linkedDocumentationURLs = tips.flatMap { documentationURLs(in: $0.description) }
+        let invalidURLs = linkedDocumentationURLs.filter { documentationPath(for: $0) == nil }
+        let linkedDocumentationPaths = linkedDocumentationURLs.compactMap(documentationPath)
+        let missingPaths = linkedDocumentationPaths.filter { path in
+            !FileManager.default.fileExists(
+                atPath: root.appendingPathComponent("docs/\(path).md").path
+            )
+        }
+
+        #expect(!linkedDocumentationURLs.isEmpty)
+        #expect(invalidURLs.isEmpty, "Invalid local documentation links: \(invalidURLs)")
+        #expect(missingPaths.isEmpty, "Missing local documentation for tip links: \(missingPaths)")
+    }
+
+    @Test("documentation links reject traversal outside docs", arguments: [
+        "https://muxy.app/docs/../README",
+        "https://muxy.app/docs/%2e%2e/README",
+        "https://muxy.app/docs/%2F..%2FREADME",
+        "https://muxy.app/docs/%5C..%5CREADME",
+    ])
+    func documentationLinksRejectTraversal(rawURL: String) throws {
+        let url = try #require(URL(string: rawURL))
+
+        #expect(documentationPath(for: url) == nil)
+    }
+
     @Test("module resource bundle contains the tips catalog")
     func moduleBundleContainsCatalog() {
         #expect(!TipCatalog.load(bundle: .module).isEmpty)
@@ -97,5 +143,32 @@ struct TipsStoreTests {
             try MuxyTip(description: "Second"),
             try MuxyTip(description: "Third"),
         ]
+    }
+
+    private func documentationURLs(in description: String) -> [URL] {
+        let prefix = "https://muxy.app/docs/"
+        var urls: [URL] = []
+        var searchStart = description.startIndex
+        while let range = description.range(of: prefix, range: searchStart ..< description.endIndex) {
+            let suffix = description[range.upperBound...]
+            let target = suffix.prefix { $0 != ")" && !$0.isWhitespace }
+            if let url = URL(string: prefix + String(target)) {
+                urls.append(url)
+            }
+            searchStart = description.index(range.upperBound, offsetBy: target.count)
+        }
+        return urls
+    }
+
+    private func documentationPath(for url: URL) -> String? {
+        guard url.scheme == "https", url.host == "muxy.app" else { return nil }
+        let components = url.pathComponents
+        guard components.count > 2, components[0] == "/", components[1] == "docs" else { return nil }
+        let relativeComponents = components.dropFirst(2)
+        guard relativeComponents.allSatisfy({ component in
+            component != "." && component != ".." && !component.isEmpty
+                && !component.contains("/") && !component.contains("\\")
+        }) else { return nil }
+        return relativeComponents.joined(separator: "/")
     }
 }
